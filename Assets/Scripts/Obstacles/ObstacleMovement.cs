@@ -14,6 +14,12 @@ public class ObstacleMovement : MonoBehaviour
     private ObstacleSpawner spawner;
     private Collider obstacleCollider;
     private bool countedAsDodged;
+    private float closestClearance = float.PositiveInfinity;
+    private GameModeController modes;
+    private Renderer body;
+    private bool swallowEmitted;
+    public bool HitPlayer { get; private set; }
+    public void MarkPlayerHit() => HitPlayer = true;
 
     public void SetSpawner(ObstacleSpawner owner)
     {
@@ -22,6 +28,8 @@ public class ObstacleMovement : MonoBehaviour
 
     void Start()
     {
+        modes = FindAnyObjectByType<GameModeController>();
+        body = GetComponent<Renderer>();
         obstacleCollider = GetComponent<Collider>();
         Vector3 position = spawnPosition;
         Camera gameCamera = Camera.main;
@@ -48,13 +56,25 @@ public class ObstacleMovement : MonoBehaviour
 
     void Update()
     {
+        if (Time.timeScale <= 0f) return;
+        Bounds previousBounds = obstacleCollider != null ? obstacleCollider.bounds : default;
         float multiplier = spawner != null ? spawner.SpeedMultiplier : 1f;
         transform.Translate(Vector3.left * obstacleSpeed * multiplier * Time.deltaTime, Space.World);
+        if (modes != null && modes.TrySwallowObstacle(body, ref swallowEmitted))
+        {
+            Destroy(gameObject);
+            return;
+        }
+
+        if (!countedAsDodged && spawner != null && obstacleCollider != null)
+            closestClearance = Mathf.Min(closestClearance,
+                spawner.MeasureClearance(previousBounds, obstacleCollider.bounds));
 
         if (!countedAsDodged && spawner != null && spawner.HasPassedPlayer(obstacleCollider))
         {
             countedAsDodged = true;
-            spawner.RegisterDodge();
+            if (!HitPlayer && closestClearance > 0f)
+                spawner.RegisterDodge(closestClearance);
         }
 
         if (transform.position.x <= despawnX)

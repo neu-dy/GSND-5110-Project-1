@@ -41,6 +41,7 @@ public class PlayerVerticalMovement : MonoBehaviour
 
     void Update()
     {
+        if (Time.timeScale <= 0f) return;
         HandleInput();
         HandleState();
         ApplyVerticalPosition();
@@ -56,7 +57,7 @@ public class PlayerVerticalMovement : MonoBehaviour
             state = VerticalState.Jumping;
         }
 
-        // Duck triggers from Grounded — returns to standing (Grounded) after duckDuration
+        // Duck triggers from Grounded â€” returns to standing (Grounded) after duckDuration
         if (Input.GetKeyDown(KeyCode.S) && state == VerticalState.Grounded)
         {
             state = VerticalState.Ducking;

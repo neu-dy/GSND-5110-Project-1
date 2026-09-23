@@ -961,9 +961,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::LoseCondition
   loseText: {fileID: 1071621732}
-  autoRestart: 1
-  restartDelay: 3
-  showRestartCountdown: 1
+  menuReturnDelay: 3
+  showReturnCountdown: 1
 --- !u!1 &1231474411
 GameObject:
   m_ObjectHideFlags: 0
@@ -974,6 +973,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1231474412}
   - component: {fileID: 1231474413}
+  - component: {fileID: 1900000040}
   m_Layer: 0
   m_Name: ObstacleSpawningController
   m_TagString: Untagged
@@ -1373,6 +1373,35 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1900000032}
   m_CullTransparentMesh: 1
+--- !u!114 &1900000040
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1231474411}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f57a9a604a314c349be1c6ecb921d423, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::GameModeController
+  player: {fileID: 1214008869}
+  textTemplate: {fileID: 1900000034}
+  startDistance: 65
+  maxDistance: 80
+  pursuerSpeed: 6.1
+  distanceChangeScale: 5
+  startingSpeed: 6
+  minimumSpeed: 2
+  maximumSpeed: 7
+  hitSpeedLoss: 1.8
+  hitDistanceLoss: 6
+  normalDodgeSpeedGain: 0.6
+  nearMissSpeedGain: 1
+  nearMissClearance: 0.2
+  hitProtectionSeconds: 0.7
+  showChaseStats: 1
+  noticeSeconds: 1.5
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

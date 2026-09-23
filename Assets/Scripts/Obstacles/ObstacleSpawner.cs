@@ -33,6 +33,7 @@ public class ObstacleSpawner : MonoBehaviour
     private int dodgedCount;
     private float speedMultiplier = 1f;
     private float noticeUntil;
+    private GameModeController modes;
 
     public float SpeedMultiplier => speedMultiplier;
 
@@ -43,16 +44,37 @@ public class ObstacleSpawner : MonoBehaviour
             && obstacleCollider.bounds.max.x < playerCollider.bounds.min.x;
     }
 
-    public void RegisterDodge()
+    public float MeasureClearance(Bounds previous, Bounds current)
+    {
+        if (playerCollider == null) return float.PositiveInfinity;
+        Bounds target = playerCollider.bounds;
+        // Sweep horizontal travel so fast obstacles cannot skip the sampling zone.
+        if (Mathf.Min(previous.min.x, current.min.x) > target.max.x
+            || Mathf.Max(previous.max.x, current.max.x) < target.min.x)
+            return float.PositiveInfinity;
+        float y = Mathf.Max(0f, Mathf.Max(current.min.y - target.max.y, target.min.y - current.max.y));
+        float z = Mathf.Max(0f, Mathf.Max(current.min.z - target.max.z, target.min.z - current.max.z));
+        return Mathf.Sqrt(y * y + z * z);
+    }
+
+    public void RegisterDodge(float clearance)
     {
         if (player == null || player.HasLost || Time.timeScale <= 0f)
             return;
         dodgedCount++;
+        if (modes != null && modes.CurrentMode == GameModeController.Mode.Chase)
+            modes.SuccessfulDodge(clearance);
         RefreshDifficulty();
     }
 
     private void RefreshDifficulty()
     {
+        if (modes != null && modes.CurrentMode != GameModeController.Mode.Acceleration)
+        {
+            speedMultiplier = 1f;
+            if (difficultyText != null) difficultyText.gameObject.SetActive(false);
+            return;
+        }
         float nextMultiplier = increaseSpeed
             ? Mathf.Min(Mathf.Max(1f, maxSpeedMultiplier),
                 1f + (dodgedCount / Mathf.Max(1, dodgesPerSpeedIncrease)) * Mathf.Max(0f, speedMultiplierStep))
@@ -75,6 +97,7 @@ public class ObstacleSpawner : MonoBehaviour
 
     void Start()
     {
+        modes = GetComponent<GameModeController>();
         if (player == null)
             player = FindAnyObjectByType<LoseCondition>();
         if (player != null)
@@ -86,6 +109,7 @@ public class ObstacleSpawner : MonoBehaviour
     void Update()
     {
         RefreshDifficulty();
+        if (Time.timeScale <= 0f || (modes != null && !modes.IsPlaying)) return;
         if (player != null && player.HasLost)
             return;
         // Toggles spawning method
@@ -132,7 +156,7 @@ public class ObstacleSpawner : MonoBehaviour
     void SpawnObstacle()
     {
         // Guard clause (populate prefabs first)
-        if (obstaclePrefabs.Length == 0)
+        if (obstaclePrefabs == null || obstaclePrefabs.Length == 0)
         {
             return;
         }
@@ -148,6 +172,6 @@ public class ObstacleSpawner : MonoBehaviour
     // Interval is (spawnRate +/- spawnVariance)
     float GetRandomSpawnInterval()
     {
-        return spawnRate + Random.Range(-spawnVariance, spawnVariance);
+        return Mathf.Max(0.1f, spawnRate + Random.Range(-spawnVariance, spawnVariance));
     }
 }
