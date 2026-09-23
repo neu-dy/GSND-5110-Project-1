@@ -11,15 +11,51 @@ public class ObstacleMovement : MonoBehaviour
     [SerializeField] private Vector3 spawnPosition;
     [SerializeField] private float obstacleSpeed = 6f;
     [SerializeField] private float despawnX = -15f; // world X coord where object is destroyed
+    private ObstacleSpawner spawner;
+    private Collider obstacleCollider;
+    private bool countedAsDodged;
+
+    public void SetSpawner(ObstacleSpawner owner)
+    {
+        spawner = owner;
+    }
 
     void Start()
     {
-        transform.position = spawnPosition;
+        obstacleCollider = GetComponent<Collider>();
+        Vector3 position = spawnPosition;
+        Camera gameCamera = Camera.main;
+        if (gameCamera != null)
+        {
+            // Keep the prefab's gameplay height/depth, but start beyond the
+            // right edge at any Game view aspect ratio (including perspective).
+            transform.position = position;
+            Renderer obstacleRenderer = GetComponent<Renderer>();
+            Bounds bounds = obstacleRenderer != null
+                ? obstacleRenderer.bounds
+                : new Bounds(position, Vector3.zero);
+            float depth = gameCamera.WorldToViewportPoint(bounds.center).z
+                + bounds.extents.z;
+            if (depth > gameCamera.nearClipPlane)
+            {
+                float rightEdge = gameCamera.ViewportToWorldPoint(
+                    new Vector3(1f, 0.5f, depth)).x;
+                position.x += rightEdge + 0.5f - bounds.min.x;
+            }
+        }
+        transform.position = position;
     }
 
     void Update()
     {
-        transform.Translate(Vector3.left * obstacleSpeed * Time.deltaTime, Space.World);
+        float multiplier = spawner != null ? spawner.SpeedMultiplier : 1f;
+        transform.Translate(Vector3.left * obstacleSpeed * multiplier * Time.deltaTime, Space.World);
+
+        if (!countedAsDodged && spawner != null && spawner.HasPassedPlayer(obstacleCollider))
+        {
+            countedAsDodged = true;
+            spawner.RegisterDodge();
+        }
 
         if (transform.position.x <= despawnX)
         {
