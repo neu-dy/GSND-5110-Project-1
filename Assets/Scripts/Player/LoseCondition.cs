@@ -12,6 +12,7 @@ public class LoseCondition : MonoBehaviour
     [FormerlySerializedAs("showRestartCountdown")]
     [SerializeField] private bool showReturnCountdown = true;
     public bool HasLost { get; private set; }
+    private const string DeathTitle = "CONSUMED BY MISFORTUNE...";
     private TMP_Text message;
     private GameModeController modes;
 
@@ -27,17 +28,17 @@ public class LoseCondition : MonoBehaviour
 
     void OnTriggerEnter(Collider other)
     {
-        if (HasLost || !other.CompareTag("Obstacle") || (modes != null && !modes.IsPlaying)) return;
+        if (HasLost || !other.enabled || !other.CompareTag("Obstacle") || (modes != null && !modes.IsPlaying)) return;
         var movement = other.GetComponentInParent<ObstacleMovement>();
-        // Touching an obstacle during protection also disqualifies its dodge reward.
+        // Any contact disqualifies the whole obstacle from earning a dodge reward.
         if (movement != null)
         {
-            if (movement.HitPlayer) return;
             movement.MarkPlayerHit();
         }
-        if (modes != null && modes.CurrentMode == GameModeController.Mode.Chase)
+        if (modes != null && modes.CurrentMode == GameModeController.Mode.Running)
             modes.TakeHit();
         else Die();
+        if (movement != null) movement.BreakPart(other);
     }
 
     public void Die()
@@ -45,7 +46,14 @@ public class LoseCondition : MonoBehaviour
         if (HasLost) return;
         HasLost = true;
         if (loseText != null) loseText.SetActive(true);
-        if (message != null) message.text = "Game over";
+        if (message != null)
+        {
+            message.text = DeathTitle;
+            message.color = new Color(1f, .16f, .12f);
+            message.enableAutoSizing = true;
+            message.fontSizeMax = message.fontSize;
+            message.fontSizeMin = 18f;
+        }
         // Keep the death UI above the curtain as it consumes the whole screen.
         if (loseText != null)
         {
@@ -66,8 +74,8 @@ public class LoseCondition : MonoBehaviour
         {
             if (showReturnCountdown && message != null)
                 message.text = remaining > 0f
-                    ? "Game over\nMain menu in " + Mathf.CeilToInt(remaining) + "s"
-                    : "Game over";
+                    ? DeathTitle + "\n<size=55%><color=#D9D9D9>Main menu in " + Mathf.CeilToInt(remaining) + "s</color></size>"
+                    : DeathTitle;
             yield return null;
             remaining -= Time.unscaledDeltaTime;
         }
@@ -81,3 +89,4 @@ public class LoseCondition : MonoBehaviour
         if (HasLost) Time.timeScale = 1f;
     }
 }
+
