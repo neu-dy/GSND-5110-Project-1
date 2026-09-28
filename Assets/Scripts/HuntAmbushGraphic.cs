@@ -12,9 +12,10 @@ public sealed class HuntAmbushGraphic : MaskableGraphic
     private Rect player;
     private float edge;
     private Vector2 prompt;
+    private Vector2? contact;
     private bool showKey,spaceKey;
-    public void Show(HuntAmbushState value,Rect playerBounds,float curtainEdge,Vector2 keyPosition,bool keyVisible,bool space,AttackSide attackSide)
-    {state=value;player=playerBounds;edge=curtainEdge;prompt=keyPosition;showKey=keyVisible;spaceKey=space;side=attackSide;SetVerticesDirty();}
+    public void Show(HuntAmbushState value,Rect playerBounds,float curtainEdge,Vector2 keyPosition,bool keyVisible,bool space,AttackSide attackSide,Vector2? contactPoint=null)
+    {state=value;player=playerBounds;edge=curtainEdge;prompt=keyPosition;showKey=keyVisible;spaceKey=space;side=attackSide;contact=contactPoint;SetVerticesDirty();}
     public void Hide(){state=null;SetVerticesDirty();}
     public static float KeyScale(HuntAmbushState value)
     {
@@ -24,14 +25,14 @@ public sealed class HuntAmbushGraphic : MaskableGraphic
     }
     // Aspect converts a screen-height distance to viewport X, preserving circles.
     public static void StrikePath(Rect body,float curtainEdge,AttackSide direction,int step,float aspect,float radius,
-        out Vector2 from,out Vector2 controlA,out Vector2 controlB,out Vector2 tip,out Vector2 key)
+        out Vector2 from,out Vector2 controlA,out Vector2 controlB,out Vector2 tip,out Vector2 key,Vector2? contactPoint=null)
     {
         float y=Mathf.Lerp(body.yMin,body.yMax,step==1?.3f:.7f);
         float gap=radius+.012f;
         if(direction==AttackSide.Top)
         {
-            key=new Vector2(body.center.x,body.yMax+gap);
-            tip=key+Vector2.up*(radius+.012f);
+            tip=contactPoint ?? new Vector2(body.center.x,body.yMax);
+            key=tip+Vector2.up*gap;
             from=new Vector2(Mathf.Clamp(body.center.x+(step-1)*.12f,.08f,.92f),1.015f);
             controlA=new Vector2(from.x+.035f,Mathf.Lerp(from.y,tip.y,.4f));
             controlB=tip+new Vector2(-.02f,.045f);
@@ -39,8 +40,8 @@ public sealed class HuntAmbushGraphic : MaskableGraphic
         else
         {
             float sign=direction==AttackSide.Left?-1f:1f;
-            key=new Vector2((sign<0?body.xMin:body.xMax)+sign*gap*aspect,y);
-            tip=key+Vector2.right*(sign*(radius+.012f)*aspect);
+            tip=contactPoint ?? new Vector2(sign<0?body.xMin:body.xMax,y);
+            key=tip+Vector2.right*(sign*gap*aspect);
             from=new Vector2(sign<0?curtainEdge-.006f:1.015f,step==0?.72f:step==1?.26f:.55f);
             controlA=new Vector2(Mathf.Lerp(from.x,tip.x,.38f),from.y+.055f);
             controlB=tip+new Vector2(sign*.07f,.035f);
@@ -53,15 +54,14 @@ public sealed class HuntAmbushGraphic : MaskableGraphic
         bool bound=phase==HuntAmbushState.Phase.Bind || phase==HuntAmbushState.Phase.Struggle || phase==HuntAmbushState.Phase.Consume
             || (phase==HuntAmbushState.Phase.Release && state.WasBound);
         if(bound)DrawBindings(mesh);
-        else if(phase==HuntAmbushState.Phase.Lunge || phase==HuntAmbushState.Phase.Focus || phase==HuntAmbushState.Phase.Response || phase==HuntAmbushState.Phase.Evade)
+        if(phase==HuntAmbushState.Phase.Lunge || phase==HuntAmbushState.Phase.Focus || phase==HuntAmbushState.Phase.Response
+            || phase==HuntAmbushState.Phase.Evade || phase==HuntAmbushState.Phase.Bind)
         {
             float aspect=rectTransform.rect.height/Mathf.Max(1,rectTransform.rect.width);
             StrikePath(player,edge,side,state.Step,aspect,state.Configuration.reactionRingRadius,
-                out Vector2 from,out Vector2 a,out Vector2 b,out Vector2 to,out _);
+                out Vector2 from,out Vector2 a,out Vector2 b,out Vector2 to,out _,contact);
             if(side==AttackSide.Left)AttachLeftRoot(ref from,ref a,state.Configuration.grabRootWidth);
-            float extension=phase==HuntAmbushState.Phase.Lunge?Mathf.SmoothStep(0,1,state.Progress)
-                :phase==HuntAmbushState.Phase.Evade?1-Mathf.SmoothStep(0,1,state.Progress):1;
-            Curve(mesh,from,a,b,to,extension,state.Configuration.grabRootWidth);
+            Curve(mesh,from,a,b,to,state.StrikeExtension,state.Configuration.grabRootWidth);
         }
         if(showKey)DrawKeyFrame(mesh);
     }
@@ -115,7 +115,8 @@ public sealed class HuntAmbushGraphic : MaskableGraphic
     }
     private void DrawKeyFrame(VertexHelper mesh)
     {
-        float remaining=state.Current==HuntAmbushState.Phase.Response?1-state.Progress:1;
+        float remaining=state.Current==HuntAmbushState.Phase.Focus || state.Current==HuntAmbushState.Phase.Response
+            ?1-state.ReactionProgress:1;
         QteKeyGraphic.DrawFrame(mesh,rectTransform.rect,prompt,spaceKey,state.Configuration.reactionRingRadius,
             remaining,KeyScale(state),Color.white);
     }

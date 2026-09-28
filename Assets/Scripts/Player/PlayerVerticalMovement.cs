@@ -21,6 +21,7 @@ public class PlayerVerticalMovement : MonoBehaviour
     [SerializeField] private float duckVelocity = 10f;
     public bool IsAirborne => state == VerticalState.Jumping;
     public bool IsDucking => state == VerticalState.Ducking;
+    public float VerticalVelocity => state == VerticalState.Jumping ? verticalVelocity : 0f;
     public bool IsFullyStanding => state == VerticalState.Grounded
         && Mathf.Abs(currentScale - standingScale) < .001f && airHeight <= .001f;
 

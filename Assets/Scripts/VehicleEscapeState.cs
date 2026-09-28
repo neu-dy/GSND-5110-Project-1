@@ -8,7 +8,7 @@ public sealed class VehicleEscapeState
     public sealed class Settings
     {
         public bool enabled = true;
-        [Min(1f)] public float finishMeters = 1200f;
+        [Min(1f)] public float finishMeters = 1000f;
         [Header("Shared Deadline")]
         [Min(3f)] public float deadlineSeconds = 10f;
         [SerializeField, HideInInspector] private int timingRevision;

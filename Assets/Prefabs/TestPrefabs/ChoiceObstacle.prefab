@@ -126,6 +126,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 81700a94bc9e6994a9adbefc1997a504, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ObstacleMovement
+  corruptionKind: 3
   spawnPosition: {x: 4.3, y: 1.45, z: -0.07}
   obstacleSpeed: 10
   despawnX: -8

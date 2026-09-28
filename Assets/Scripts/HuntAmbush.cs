@@ -18,6 +18,7 @@ public sealed class HuntAmbush
     private readonly HuntAmbushState.Settings settings;
     private readonly Collider player;
     private readonly PlayerVerticalMovement vertical;
+    private readonly Animator animator;
     private readonly ObstacleSpawner spawner;
     private readonly RectTransform curtain;
     private readonly HuntAmbushGraphic graphic;
@@ -26,7 +27,7 @@ public sealed class HuntAmbush
     private readonly HuntAmbushGraphic.AttackSide[] directions=new HuntAmbushGraphic.AttackSide[3];
     private static readonly KeyCode[] Keyboard=(KeyCode[])Enum.GetValues(typeof(KeyCode));
     private int lastHunt=-1,releasedFrame=-1;
-    private bool selected,used,ownsTime,ownsPose,focusPaused,skipResumeFrame;
+    private bool selected,used,firstAmbushUsed,ownsTime,ownsPose,focusPaused,skipResumeFrame;
     private float savedScale,savedFixed,entryEdge,returnFrom;
     private Vector3 entryPosition,entryScale;
     private Quaternion entryRotation;
@@ -37,6 +38,7 @@ public sealed class HuntAmbush
     {
         this.modes=modes;this.settings=settings;this.keys=keys;this.player=player;this.spawner=spawner;this.curtain=curtain;
         vertical=player.GetComponent<PlayerVerticalMovement>();
+        animator=player.GetComponentInChildren<Animator>();
         var go=new GameObject("Hunt Ambush Tendrils",typeof(RectTransform),typeof(CanvasRenderer),typeof(HuntAmbushGraphic));
         go.transform.SetParent(uiRoot,false);graphic=go.GetComponent<HuntAmbushGraphic>();graphic.raycastTarget=false;graphic.Curtain=curtain.GetComponent<ViscousCurtain>();
         var r=graphic.rectTransform;r.anchorMin=Vector2.zero;r.anchorMax=Vector2.one;r.offsetMin=r.offsetMax=Vector2.zero;
@@ -46,7 +48,7 @@ public sealed class HuntAmbush
         prompt.color=Color.white;prompt.outlineWidth=.3f;prompt.outlineColor=Color.black;prompt.raycastTarget=false;
         prompt.rectTransform.sizeDelta=new Vector2(150,55);prompt.gameObject.SetActive(false);
     }
-    public void Reset(){Cancel();lastHunt=-1;used=selected=false;releasedFrame=-1;}
+    public void Reset(){Cancel();lastHunt=-1;used=selected=firstAmbushUsed=false;releasedFrame=-1;}
     public bool Prepare(TentacleAttackState hunt,double meters,float huntLength)
     {
         if(Engaged)return true;
@@ -59,7 +61,7 @@ public sealed class HuntAmbush
         if(!idle)return false; // Never interrupt an announced or committed strike.
         Reserved=true;
         if(vertical==null || !vertical.IsFullyStanding)return true;
-        if(spawner!=null && spawner.HasPendingObstacle(player.bounds.min.x))return true;
+        if(spawner!=null && spawner.HasPendingObstacle(PlayerHurtbox.BoundsFor(player).min.x))return true;
         if(Camera.main==null || !modes.CanAffordCrouch(0,0,0) || modes.CurtainDanger(.01f)>=1f)
         {used=true;Reserved=false;return false;}
         Begin();return true;
@@ -69,10 +71,10 @@ public sealed class HuntAmbush
         used=true;Reserved=true;ownsPose=true;releasedFrame=-1;
         State=new HuntAmbushState(settings);
         int a=UnityEngine.Random.Range(0,3),b=(a+UnityEngine.Random.Range(1,3))%3,c=3-a-b;
-        State.Begin(a,b,c);previous=State.Current;
+        State.Begin(a,b,c,!firstAmbushUsed);firstAmbushUsed=true;previous=State.Current;
         entryPosition=player.transform.position;entryScale=player.transform.localScale;entryRotation=player.transform.localRotation;
         entryEdge=returnFrom=curtain.anchorMax.x;
-        Rect bounds=CurtainTentacles.ViewportBounds(Camera.main,player.bounds);
+        Rect bounds=CurtainTentacles.ViewportBounds(Camera.main,PlayerHurtbox.BoundsFor(player));
         float aspect=graphic.rectTransform.rect.height/Mathf.Max(1,graphic.rectTransform.rect.width);
         bool leftFits=bounds.xMin-entryEdge>(State.Configuration.reactionRingRadius*2+.045f)*aspect;
         for(int i=0;i<3;i++)
@@ -140,7 +142,7 @@ public sealed class HuntAmbush
         if(ownsPose)player.transform.position=entryPosition+Vector3.right*(dodge*.12f*dodgeSign);
         if(ownsPose)player.transform.localRotation=entryRotation*Quaternion.Euler(0,0,dodge*-10*dodgeSign);
         Physics.SyncTransforms();
-        Rect bounds=CurtainTentacles.ViewportBounds(Camera.main,player.bounds);
+        Rect bounds=CurtainTentacles.ViewportBounds(Camera.main,PlayerHurtbox.BoundsFor(player));
         float edge=entryEdge;
         float near=Mathf.Max(entryEdge,bounds.xMin-.003f);
         if(phase==HuntAmbushState.Phase.Bind)edge=Mathf.Lerp(entryEdge,near,.45f*Mathf.SmoothStep(0,1,State.Progress));
@@ -153,8 +155,9 @@ public sealed class HuntAmbush
         bool struggle=phase==HuntAmbushState.Phase.Bind || phase==HuntAmbushState.Phase.Struggle;
         bool keyVisible=struggle || phase==HuntAmbushState.Phase.Focus || phase==HuntAmbushState.Phase.Response;
         float aspect=graphic.rectTransform.rect.height/Mathf.Max(1,graphic.rectTransform.rect.width);
+        Vector2? contact=VisibleContact(direction,State.Step);
         HuntAmbushGraphic.StrikePath(bounds,edge,direction,State.Step,aspect,State.Configuration.reactionRingRadius,
-            out _,out _,out _,out _,out Vector2 keyPosition);
+            out _,out _,out _,out _,out Vector2 keyPosition,contact);
         if(struggle)keyPosition=new Vector2(Mathf.Clamp(bounds.xMax+.09f,.12f,.86f),Mathf.Clamp(bounds.yMax+.075f,.16f,.87f));
         prompt.gameObject.SetActive(keyVisible);
         if(keyVisible)
@@ -165,7 +168,22 @@ public sealed class HuntAmbush
             prompt.rectTransform.localScale=Vector3.one*HuntAmbushGraphic.KeyScale(State);
             prompt.fontSize=struggle?20:Mathf.Clamp(State.Configuration.reactionRingRadius*graphic.rectTransform.rect.height*1.3f,18f,42f);
         }
-        graphic.Show(State,bounds,edge,keyPosition,keyVisible,struggle,direction);
+        graphic.Show(State,bounds,edge,keyPosition,keyVisible,struggle,direction,contact);
+    }
+    private Vector2? VisibleContact(HuntAmbushGraphic.AttackSide side,int step)
+    {
+        // Running clips lean outside the original box. Aim at the visible body,
+        // so a completed ring means contact with the character rather than empty air.
+        if(animator==null || !animator.isHuman)return null;
+        HumanBodyBones bone=side==HuntAmbushGraphic.AttackSide.Top?HumanBodyBones.Head
+            :step==1?HumanBodyBones.Hips:HumanBodyBones.Chest;
+        Transform target=animator.GetBoneTransform(bone);
+        if(target==null)return null;
+        Vector3 point=target.position;
+        if(side==HuntAmbushGraphic.AttackSide.Top)point.y+=PlayerHurtbox.BoundsFor(player).size.y*.06f;
+        else point.x+=(side==HuntAmbushGraphic.AttackSide.Left?-1f:1f)*PlayerHurtbox.BoundsFor(player).size.x*.45f;
+        Vector3 viewport=Camera.main.WorldToViewportPoint(point);
+        return new Vector2(viewport.x,viewport.y);
     }
     private static string KeyLabel(KeyCode code)
     {string value=code.ToString();return value.StartsWith("Alpha")?value.Substring(5):value.ToUpperInvariant();}

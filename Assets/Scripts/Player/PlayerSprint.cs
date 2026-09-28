@@ -7,11 +7,25 @@ public class PlayerSprint : MonoBehaviour
 {
     [Header("Sprint - Hold on Ground")]
     [SerializeField] private KeyCode sprintKey = KeyCode.LeftShift;
-    [SerializeField, Min(.1f)] private float maximumRightSpeed = 2.4f;
-    [SerializeField, Min(.1f)] private float acceleration = 6f;
-    [SerializeField, Min(.1f)] private float returnSpeed = 1.1f;
-    [SerializeField, Min(.1f)] private float returnAcceleration = 4.5f;
+    [SerializeField, Min(.1f)] private float maximumRightSpeed = 2.7f;
+    [SerializeField, Min(.1f)] private float acceleration = 6.5f;
+    [SerializeField, Min(.1f)] private float returnSpeed = 1.3f;
+    [SerializeField, Min(.1f)] private float returnAcceleration = 5.2f;
     [SerializeField, Range(.35f, .65f)] private float rightmostViewport = .5f;
+
+    [Header("Dash - Tap on Ground")]
+    [Tooltip("Independent of the hold-to-sprint Shift key. A dash gives no invulnerability.")]
+    [SerializeField] private KeyCode dashKey = KeyCode.LeftControl;
+    [SerializeField, Min(.05f)] private float dashDuration = .28f;
+    [SerializeField, Min(.1f)] private float dashSpeed = 5f;
+    [SerializeField, Min(.1f)] private float dashAcceleration = 28f;
+    [SerializeField, Min(.1f)] private float dashBrakeAcceleration = 12f;
+    [SerializeField, Min(.1f)] private float dashCooldown = 1.25f;
+    [SerializeField, Min(0f)] private float dashBpmCost = 8f;
+    [Tooltip("One dash near the ordinary right edge may briefly cross it by this fraction of screen width.")]
+    [SerializeField, Range(0f, .15f)] private float dashOverrunViewport = .08f;
+    [Tooltip("The edge-crossing dash becomes available again only after returning this close to home.")]
+    [SerializeField, Min(0f)] private float dashOverrunRearmDistance = .35f;
 
     [Header("Heartbeat - BPM")]
     [SerializeField] private float restingBpm = 80f;
@@ -23,6 +37,8 @@ public class PlayerSprint : MonoBehaviour
     [SerializeField, Min(.1f)] private float proximityResponse = 25f;
     [Tooltip("Visible horizontal gap, in viewport width, at which environmental anxiety subsides.")]
     [SerializeField, Range(.05f, .5f)] private float calmViewportGap = .22f;
+    [Tooltip("Minimum actual heart rate during the hunt. Proximity can still raise it further.")]
+    [SerializeField, Min(30f)] private float huntMinimumBpm = 96f;
 
     [Header("Sprint Recovery and Overload")]
     [Tooltip("Exertion only recovers after this long without sprint effort or rightward motion.")]
@@ -58,11 +74,17 @@ public class PlayerSprint : MonoBehaviour
     // Running effort for the odometer, independent of the screen-position boundary.
     public float DistanceSprintIntensity { get; private set; }
     public bool NeedsSprintRelease { get; private set; }
+    public bool IsDashing => dashRemaining > 0f;
+    public float DashCooldownRemaining => dashCooldownRemaining;
     public Vector3 HomePosition { get; private set; }
     public float BeatScale => beatScale;
     public float OverloadScale => overloadScale;
     private PlayerVerticalMovement vertical;
     private GameModeController modes;
+    private float dashRemaining;
+    private float dashCooldownRemaining;
+    private bool dashOverrunActive;
+    private bool dashOverrunSpent;
 
     void Start()
     {
@@ -76,36 +98,68 @@ public class PlayerSprint : MonoBehaviour
     void Update()
     {
         if (Time.timeScale <= 0f || modes == null || !modes.IsPlaying) return;
-        Step(Time.deltaTime, Input.GetKey(sprintKey), vertical.IsAirborne, vertical.IsDucking);
+        Step(Time.deltaTime, Input.GetKey(sprintKey), vertical.IsAirborne, vertical.IsDucking,
+            Input.GetKeyDown(dashKey));
     }
 
     // Shared by live input and gameplay validation. No airborne key can change momentum.
-    public void Step(float dt, bool held, bool airborne, bool crouching)
+    public void Step(float dt, bool held, bool airborne, bool crouching, bool dashPressed = false)
     {
         if (dt <= 0f || Heart == null) return;
+        dashCooldownRemaining = Mathf.Max(0f, dashCooldownRemaining - dt);
         // Releasing after overload re-arms input, even while the heart is still recovering.
         // Holding the key throughout recovery must never start the next sprint automatically.
         if (!held) NeedsSprintRelease = false;
-        if (modes != null && (modes.AmbushOwnsPlayer || modes.VehicleEscapeActive)) return;
+        if (modes != null && (modes.AmbushOwnsPlayer || modes.VehicleEscapeActive))
+        {
+            dashRemaining = 0f;
+            return;
+        }
+        if (airborne || crouching) dashRemaining = 0f;
+        float maxX = RightLimitX();
+        float x = transform.position.x;
+        if (x <= HomePosition.x + dashOverrunRearmDistance) dashOverrunSpent = false;
+        if (dashOverrunActive && dashRemaining <= 0f && x <= maxX) dashOverrunActive = false;
+        float expectedDashTravel = dashSpeed * dashDuration * .65f;
+        bool needsOverrun = maxX - x < expectedDashTravel;
+        if (dashPressed && !airborne && !crouching && dashRemaining <= 0f
+            && dashCooldownRemaining <= 0f && !Heart.Overheated
+            && Heart.Bpm + dashBpmCost < Heart.LimitBpm - .01f
+            && (!needsOverrun || (!dashOverrunSpent && dashOverrunViewport > 0f)))
+        {
+            if (needsOverrun)
+            {
+                dashOverrunActive = true;
+                dashOverrunSpent = true;
+            }
+            dashRemaining = dashDuration;
+            dashCooldownRemaining = dashCooldown;
+            Heart.AddExertion(dashBpmCost);
+        }
         bool wantsSprint = !airborne && !crouching && held && !NeedsSprintRelease;
         bool wasOverheated = Heart.Overheated;
         // Carrying sprint momentum still costs effort; repeated jumps cannot bypass exhaustion.
-        bool exerting = airborne ? HorizontalSpeed > .05f : wantsSprint && !wasOverheated;
+        bool exerting = airborne ? HorizontalSpeed > .05f : (wantsSprint || IsDashing) && !wasOverheated;
         bool recoveryAllowed = HorizontalSpeed <= .05f && !exerting;
         float danger = modes != null ? modes.CurtainDanger(calmViewportGap) : 0f;
         Heart.Tick(dt, danger, exerting, sprintBpmPerSecond, recoveryBpmPerSecond, proximityResponse,
-            recoveryAllowed);
+            recoveryAllowed, modes != null && modes.IsHunting ? huntMinimumBpm : 0f);
         if (!wasOverheated && Heart.Overheated) NeedsSprintRelease = held;
+        if (Heart.Overheated) dashRemaining = 0f;
 
-        float maxX = RightLimitX();
-        float x = transform.position.x;
         if (!airborne)
         {
             bool sprinting = wantsSprint && !Heart.Overheated && !NeedsSprintRelease;
-            float rate = sprinting ? acceleration : returnAcceleration;
-            DistanceSprintIntensity = Mathf.MoveTowards(DistanceSprintIntensity, sprinting ? 1f : 0f,
+            bool dashing = IsDashing;
+            // Beyond the normal edge, even a held Shift yields to a smooth return.
+            if (x > maxX && !dashing) sprinting = false;
+            float rate = dashing ? dashAcceleration : sprinting ? acceleration : returnAcceleration;
+            DistanceSprintIntensity = Mathf.MoveTowards(DistanceSprintIntensity, sprinting || dashing ? 1f : 0f,
                 rate / Mathf.Max(.1f, maximumRightSpeed) * dt);
-            HorizontalSpeed = NextGroundSpeed(x, HorizontalSpeed, maxX, sprinting, dt);
+            HorizontalSpeed = dashing ? NextDashSpeed(x, HorizontalSpeed,
+                    dashOverrunActive ? ExtendedLimitX() : maxX, dt)
+                : NextGroundSpeed(x, HorizontalSpeed, maxX, sprinting, dt);
+            dashRemaining = Mathf.Max(0f, dashRemaining - dt);
         }
         else
         {
@@ -114,14 +168,16 @@ public class PlayerSprint : MonoBehaviour
                 Mathf.Clamp01(HorizontalSpeed / Mathf.Max(.1f, maximumRightSpeed)));
         }
         Vector3 position = transform.position;
-        position.x = Mathf.Clamp(x + HorizontalSpeed * dt, HomePosition.x, maxX);
-        if ((position.x >= maxX && HorizontalSpeed > 0f) || (position.x <= HomePosition.x && HorizontalSpeed < 0f))
+        float travelLimit = dashOverrunActive ? ExtendedLimitX() : maxX;
+        position.x = Mathf.Clamp(x + HorizontalSpeed * dt, HomePosition.x, travelLimit);
+        if ((position.x >= travelLimit && HorizontalSpeed > 0f) || (position.x <= HomePosition.x && HorizontalSpeed < 0f))
             HorizontalSpeed = 0f;
         transform.position = position;
     }
 
     public void TickStationaryHeartbeat(float dt,float danger)
     {
+        dashRemaining = 0f;
         HorizontalSpeed=DistanceSprintIntensity=0f;
         Heart?.Tick(dt,danger,false,sprintBpmPerSecond,recoveryBpmPerSecond,proximityResponse,true);
     }
@@ -141,18 +197,36 @@ public class PlayerSprint : MonoBehaviour
 
     private float NextGroundSpeed(float x, float speed, float maxX, bool sprinting, float dt)
     {
-        float rate = sprinting ? acceleration : returnAcceleration;
+        float rate = sprinting ? acceleration : speed > maximumRightSpeed ? dashBrakeAcceleration : returnAcceleration;
         float remaining = sprinting ? maxX - x : x - HomePosition.x;
         float target = Mathf.Min(sprinting ? maximumRightSpeed : returnSpeed,
             Mathf.Sqrt(2f * rate * Mathf.Max(0f, remaining)));
         return Mathf.MoveTowards(speed, sprinting ? target : -target, rate * dt);
     }
 
+    private float ExtendedLimitX()
+    {
+        Camera camera = Camera.main;
+        if (camera == null) return RightLimitX() + 1f;
+        float depth = camera.WorldToViewportPoint(HomePosition).z;
+        if (depth <= camera.nearClipPlane) return RightLimitX() + 1f;
+        float viewport = Mathf.Min(.8f, rightmostViewport + dashOverrunViewport);
+        return Mathf.Max(RightLimitX(), camera.ViewportToWorldPoint(new Vector3(viewport, .5f, depth)).x);
+    }
+
+    private float NextDashSpeed(float x, float speed, float maxX, float dt)
+    {
+        float remaining = Mathf.Max(0f, maxX - x);
+        float target = Mathf.Min(dashSpeed, Mathf.Sqrt(2f * dashAcceleration * remaining));
+        return Mathf.MoveTowards(speed, target, dashAcceleration * dt);
+    }
+
     // A drop only commits when at least one grounded escape fits inside its warning.
     // Forecast uses the same acceleration/boundary code, without changing live state.
     public bool CanEvadeDrop(float clearance, float warningSeconds, float reactionSeconds)
     {
-        if (Heart == null || vertical == null || vertical.IsAirborne || vertical.IsDucking) return false;
+        if (Heart == null || vertical == null || vertical.IsAirborne || vertical.IsDucking
+            || transform.position.x > RightLimitX() + .001f) return false;
         float maxX = RightLimitX(), start = transform.position.x;
         for (int route = 0; route < 2; route++)
         {
@@ -175,17 +249,18 @@ public class PlayerSprint : MonoBehaviour
         return false;
     }
 
-    public float HorizontalHomeX => HomePosition.x + (GetComponent<Collider>().bounds.center.x-transform.position.x);
-    public float HorizontalLimitX => RightLimitX() + (GetComponent<Collider>().bounds.center.x-transform.position.x);
+    public float HorizontalHomeX => HomePosition.x + (PlayerHurtbox.BoundsFor(GetComponent<Collider>()).center.x-transform.position.x);
+    public float HorizontalLimitX => RightLimitX() + (PlayerHurtbox.BoundsFor(GetComponent<Collider>()).center.x-transform.position.x);
 
     // Prove one continuous release/hold route stays outside every committed lane
     // from the first strike until the last retract. Uses live momentum and heart debt.
     public bool CanAvoidOverhead(float[] lanes, float halfWidth, float warning, float total, float reaction, float padding)
     {
-        if(Heart==null || vertical==null || !vertical.IsFullyStanding)return false;
+        if(Heart==null || vertical==null || !vertical.IsFullyStanding
+            || transform.position.x>RightLimitX()+.001f)return false;
         float limit=RightLimitX();
-        var body=GetComponent<Collider>();float offset=body.bounds.center.x-transform.position.x;
-        float clearance=halfWidth+body.bounds.extents.x+Mathf.Max(0,padding);
+        var body=GetComponent<Collider>();float offset=PlayerHurtbox.BoundsFor(body).center.x-transform.position.x;
+        float clearance=halfWidth+PlayerHurtbox.BoundsFor(body).extents.x+Mathf.Max(0,padding);
         for(int route=0;route<2;route++)
         {
             bool right=route==1;
@@ -224,5 +299,13 @@ public class PlayerSprint : MonoBehaviour
         recoveryDelay = validated.RecoveryDelay;
         overloadResidualBpm = validated.ResidualAmount;
         overloadResidualDuration = validated.ResidualDuration;
+        dashDuration = Mathf.Max(.05f, dashDuration);
+        dashSpeed = Mathf.Max(.1f, dashSpeed);
+        dashAcceleration = Mathf.Max(.1f, dashAcceleration);
+        dashBrakeAcceleration = Mathf.Max(.1f, dashBrakeAcceleration);
+        dashCooldown = Mathf.Max(dashDuration, dashCooldown);
+        dashBpmCost = Mathf.Max(0f, dashBpmCost);
+        dashOverrunRearmDistance = Mathf.Max(0f, dashOverrunRearmDistance);
+        huntMinimumBpm = Mathf.Clamp(huntMinimumBpm, restingBpm, threatBpm);
     }
 }

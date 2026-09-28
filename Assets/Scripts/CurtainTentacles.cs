@@ -67,7 +67,7 @@ public sealed class CurtainTentacles
     public void Tick(float dt,double meters)
     {
         if(State==null || dt<=0)return;
-        float safeLeft=home.x-player.bounds.extents.x;
+        float safeLeft=home.x-PlayerHurtbox.BoundsFor(player).extents.x;
         bool clear=spawner==null || !spawner.HasPendingObstacle(safeLeft);
         bool grounded=vertical==null || !vertical.IsAirborne;
         float jumpWindow=vertical!=null ? vertical.JumpClearanceSeconds(settings.lowCenterHeight+settings.lowHalfHeight*1.6f) : 0;
@@ -77,7 +77,7 @@ public sealed class CurtainTentacles
             Physics.SyncTransforms();
             float active=settings.ceilingExtendSeconds+settings.ceilingHoldSeconds+settings.ceilingRetractSeconds;
             ceilingPlan=OverheadPressure.Choose(settings.ceilingPressure,meters,modes.RunElapsedSeconds,
-                player.bounds.center.x,sprint.HorizontalHomeX,sprint.HorizontalLimitX,settings.ceilingHalfWidth*2,
+                PlayerHurtbox.BoundsFor(player).center.x,sprint.HorizontalHomeX,sprint.HorizontalLimitX,settings.ceilingHalfWidth*2,
                 settings.ceilingWarningSeconds,active,UnityEngine.Random.value<settings.ceilingPressure.simultaneousChance,UnityEngine.Random.value<.5f,
                 (lanes,warning,total)=>sprint.CanAvoidOverhead(lanes,settings.ceilingHalfWidth,warning,total,settings.ceilingReactionSeconds,settings.ceilingEscapePadding)
                     && modes.CanAffordCrouch(total,0,settings.ceilingSafetyReserve));
@@ -121,7 +121,7 @@ public sealed class CurtainTentacles
         lockedRootRadius=lockedRadius*1.6f;
         // The strike lane is committed at warning start. It never tracks input.
         lockedTip=settings.reachViewport;
-        float left=camera.WorldToViewportPoint(new Vector3(home.x-player.bounds.extents.x,ground+height,home.z)).x;
+        float left=camera.WorldToViewportPoint(new Vector3(home.x-PlayerHurtbox.BoundsFor(player).extents.x,ground+height,home.z)).x;
         previewTip=Mathf.Min(left-.018f,curtain.rectTransform.anchorMax.x+settings.warningReachViewport);
     }
     public void RenderAndCollide()
@@ -150,15 +150,21 @@ public sealed class CurtainTentacles
         // Vertical input and sprint moved this frame; use their current colliders,
         // rather than the previous fixed-physics step, for the short ground strike.
         Physics.SyncTransforms();
-        Bounds hurtbox=player.bounds;
-        hurtbox.Expand(new Vector3(0,-2f*Mathf.Min(settings.playerHitboxInset,hurtbox.extents.y*.25f),0));
-        Rect bounds=ViewportBounds(camera,hurtbox);
-        if(tip>=bounds.xMin && root<=bounds.xMax)
+        bool hit=false;
+        Rect contact=default;
+        for(int part=0;part<PlayerHurtbox.PartCount(player);part++)
         {
-            hadExposure=true;
-            float gap=Mathf.Max(0,Mathf.Max(bounds.yMin-(lockedY+lockedRadius),(lockedY-lockedRadius)-bounds.yMax));
-            float worldPerViewport=lockedRadius>0 ? (State.AttackKind==TentacleAttackState.Kind.HighSweep?settings.highHalfHeight:settings.lowHalfHeight)/lockedRadius : 1;
-            closestClearance=Mathf.Min(closestClearance,gap*worldPerViewport);
+            Bounds hurtbox=PlayerHurtbox.PartBounds(player,part);
+            hurtbox.Expand(new Vector3(0,-2f*Mathf.Min(settings.playerHitboxInset,hurtbox.extents.y*.25f),0));
+            Rect bounds=ViewportBounds(camera,hurtbox);
+            if(tip>=bounds.xMin && root<=bounds.xMax)
+            {
+                hadExposure=true;
+                float gap=Mathf.Max(0,Mathf.Max(bounds.yMin-(lockedY+lockedRadius),(lockedY-lockedRadius)-bounds.yMax));
+                float worldPerViewport=lockedRadius>0 ? (State.AttackKind==TentacleAttackState.Kind.HighSweep?settings.highHalfHeight:settings.lowHalfHeight)/lockedRadius : 1;
+                closestClearance=Mathf.Min(closestClearance,gap*worldPerViewport);
+            }
+            if(graphic.Intersects(bounds)){hit=true;contact=bounds;}
         }
         // Only residual obstacles should remain here; still shatter any solid part
         // actually touched by the strike. BreakApart disqualifies dodge rewards.
@@ -168,10 +174,10 @@ public sealed class CurtainTentacles
             foreach(var body in obstacle.GetComponentsInChildren<Renderer>())
                 if(body.enabled && graphic.Intersects(ViewportBounds(camera,body.bounds))) { obstacle.BreakApart();break; }
         }
-        if(!State.HitThisAttack && graphic.Intersects(bounds))
+        if(!State.HitThisAttack && hit)
         {
             State.NotifyHit();
-            modes.TakeTentacleHit(new Vector2(bounds.xMin,Mathf.Clamp(lockedY,bounds.yMin,bounds.yMax)));
+            modes.TakeTentacleHit(new Vector2(contact.xMin,Mathf.Clamp(lockedY,contact.yMin,contact.yMax)));
         }
     }
     public static Rect ViewportBounds(Camera camera,Bounds bounds)

@@ -3,7 +3,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-[DefaultExecutionOrder(1000)]
+[DefaultExecutionOrder(1400)]
 public class GameModeController : MonoBehaviour
 {
     public enum Mode { Menu, Running }
@@ -23,6 +23,10 @@ public class GameModeController : MonoBehaviour
     [Header("Tentacles - Attacks and Distance Hunts")]
     [SerializeField] private TentacleAttackState.Settings tentacleAttacks = new TentacleAttackState.Settings();
     private CurtainTentacles tentacles;
+    public bool IsHunting => tentacles != null && tentacles.State != null
+        && (tentacles.State.CurrentStage == TentacleAttackState.Stage.HuntPrelude
+            || tentacles.State.CurrentStage == TentacleAttackState.Stage.Hunt
+            || tentacles.State.CurrentStage == TentacleAttackState.Stage.LeavingHunt);
     public bool TentaclesBlockSpawns => (tentacles != null && tentacles.BlocksSpawns) || (ambush != null && (ambush.Reserved || ambush.Engaged));
 
     [Header("Hunt Ambush - Reaction and Escape (real seconds)")]
@@ -31,6 +35,10 @@ public class GameModeController : MonoBehaviour
     [SerializeField] private KeyCode[] ambushKeys = { KeyCode.Q, KeyCode.E, KeyCode.R };
     private HuntAmbush ambush;
     public bool AmbushOwnsPlayer => ambush != null && ambush.BlocksPlayer;
+    public bool AmbushBound => ambush != null && ambush.Engaged
+        && (ambush.State.Current == HuntAmbushState.Phase.Bind
+            || ambush.State.Current == HuntAmbushState.Phase.Struggle
+            || ambush.State.Current == HuntAmbushState.Phase.Consume);
     public float AmbushStress => ambush != null ? ambush.Stress : 0f;
 
     [Header("Distance Difficulty - Encounter Frequency")]
@@ -44,6 +52,13 @@ public class GameModeController : MonoBehaviour
     [Header("Tentacle Hit Fragments")]
     [SerializeField, Range(0, 80)] private int tentacleHitParticleCount = 16;
     [SerializeField, Min(.1f)] private float tentacleHitParticleLifetime = .65f;
+
+    [Header("Injury - Screen Edge Flash")]
+    [SerializeField] private Color injuryFlashColor = new Color(1f, .025f, .045f, 1f);
+    [SerializeField, Range(0f, 1f)] private float injuryFlashStrength = .6f;
+    [SerializeField, Min(.08f)] private float injuryFlashSeconds = .4f;
+    [SerializeField, Range(.05f, .4f)] private float injuryFlashWidth = .18f;
+    private InjuryVignetteGraphic injuryFlash;
 
     [Header("Pursuit - Screen Mapping") ]
     [Tooltip("Visual distance scale, separate from the allowed escape distance.")]
@@ -94,6 +109,8 @@ public class GameModeController : MonoBehaviour
     [SerializeField] private VehicleEscapeState.Settings vehicleEscapeSettings = new VehicleEscapeState.Settings();
     private VehicleEscapeController vehicleEscape;
     public bool VehicleEscapeActive => vehicleEscape != null && vehicleEscape.Active;
+    public bool VehicleEscapeApproaching => VehicleEscapeActive
+        && vehicleEscape.State.Current == VehicleEscapeState.Phase.Arrival;
 
     [Header("Test Feedback")]
     [Tooltip("Hide verbose prototype statistics during play. Disable to restore the prototype statistics.")]
@@ -127,7 +144,7 @@ public class GameModeController : MonoBehaviour
     {
         if(VehicleEscapeActive)return vehicleEscape.Danger(calmGap);
         if (!IsPlaying || Camera.main == null || curtainShape == null) return 0f;
-        Vector3 position = Camera.main.WorldToViewportPoint(playerCollider.bounds.center);
+        Vector3 position = Camera.main.WorldToViewportPoint(PlayerHurtbox.BoundsFor(playerCollider).center);
         float gap = position.x - curtainShape.EdgeAt(position.y);
         return 1f - Mathf.Clamp01(gap / Mathf.Max(.01f, calmGap));
     }
@@ -140,6 +157,9 @@ public class GameModeController : MonoBehaviour
     private UnityEngine.UI.Button startButton;
     private RectTransform startButtonRect;
     private Vector2 startButtonPosition;
+    private TMP_Text[] menuControlHints;
+    private Vector2[] menuControlPositions;
+    private RectTransform menuControlBackdrop;
     private float menuElapsed;
     private bool menuStarting;
     public bool IsMenuStarting => menuStarting;
@@ -193,6 +213,28 @@ public class GameModeController : MonoBehaviour
             new Vector2(offscreenX, startButtonPosition.y - parent.rect.height * .035f), eased);
         startButtonRect.localRotation = Quaternion.Euler(0, 0, -12f * Mathf.Sin(pull * Mathf.PI));
         startButtonRect.localScale = Vector3.one * Mathf.Lerp(1f, .55f, eased);
+        float backdropFall = Mathf.Clamp01(menuElapsed / .75f);
+        menuControlBackdrop.anchoredPosition = new Vector2(0f,
+            -100f - parent.rect.height * .27f * backdropFall * backdropFall);
+        menuControlBackdrop.localRotation = Quaternion.Euler(0f, 0f, -8f * backdropFall);
+        menuControlBackdrop.localScale = new Vector3(1f - .35f * backdropFall, 1f - .7f * backdropFall, 1f);
+        Color backdropColor = menuControlBackdrop.GetComponent<Image>().color;
+        backdropColor.a = .95f * (1f - backdropFall);
+        menuControlBackdrop.GetComponent<Image>().color = backdropColor;
+        for (int i = 0; i < menuControlHints.Length; i++)
+        {
+            float fall = Mathf.Clamp01((menuElapsed - i * .07f) / .72f);
+            float collapse = fall * fall;
+            RectTransform hint = menuControlHints[i].rectTransform;
+            hint.anchoredPosition = menuControlPositions[i] + new Vector2(
+                (i % 2 == 0 ? -1f : 1f) * parent.rect.width * .055f * collapse,
+                -parent.rect.height * (.25f + i * .035f) * collapse);
+            hint.localRotation = Quaternion.Euler(0, 0, (i % 2 == 0 ? -1f : 1f) * (18f + i * 5f) * fall);
+            hint.localScale = Vector3.one * Mathf.Lerp(1f, .35f, collapse);
+            Color color = menuControlHints[i].color;
+            color.a = .85f * (1f - Mathf.Clamp01((fall - .35f) / .65f));
+            menuControlHints[i].color = color;
+        }
         menuDevour.Show(startButtonRect, menuElapsed / reach,
             (menuElapsed - reach) / grip, pull, menuElapsed);
         if (menuElapsed < reach + grip + drag + .15f) return;
@@ -224,22 +266,30 @@ public class GameModeController : MonoBehaviour
 
     public void TakeHit()
     {
-        TryTakeHit();
+        if (!TryTakeHit() || Camera.main == null || playerCollider == null) return;
+        Vector3 point = Camera.main.WorldToViewportPoint(PlayerHurtbox.BoundsFor(playerCollider).center);
+        EmitPlayerHit(point);
     }
 
     public void TakeTentacleHit(Vector2 contactViewport)
     {
         if (!TryTakeHit() || particles == null) return;
-        Renderer body = player.GetComponentInChildren<Renderer>();
-        if (body != null)
-            particles.Burst(contactViewport, BodyColor(body), tentacleHitParticleCount,
-                tentacleHitParticleLifetime, false, new Vector2(.012f, .025f));
+        EmitPlayerHit(contactViewport);
+    }
+
+    private void EmitPlayerHit(Vector2 contactViewport)
+    {
+        if (particles == null || player == null) return;
+        particles.Burst(contactViewport, CharacterAppearanceColor.Dominant(player.transform),
+            tentacleHitParticleCount, tentacleHitParticleLifetime, false, new Vector2(.012f, .025f));
     }
 
     private bool TryTakeHit()
     {
         if (!IsPlaying || CurrentMode != Mode.Running || VehicleEscapeActive || (ambush != null && ambush.Engaged)) return false;
         chase.Hit(hitSpeedLoss, minimumSpeed, injuryRecoveryPerSecond);
+        if (injuryFlash != null)
+            injuryFlash.Flash(injuryFlashColor, injuryFlashStrength, injuryFlashSeconds, injuryFlashWidth);
         tentacles?.NotifyHit();
         SetNotice("INJURED - slowing down");
         UpdateChaseDisplay();
@@ -354,14 +404,20 @@ public class GameModeController : MonoBehaviour
             Mathf.Infinity, Time.deltaTime);
         curtain.anchorMax = new Vector2(edge, 1f);
         RefreshCurtainShape();
-        tentacles.RenderAndCollide();
         if (curtainEntering && Mathf.Abs(edge - curtainTarget) < 0.001f)
             curtainEntering = false;
+    }
+
+    private void ResolveBodyContact()
+    {
+        // The Animator, shoe alignment and bone-driven hurtboxes have now finished.
+        if (!IsPlaying || swallowing || VehicleEscapeActive || ambush == null || ambush.Engaged) return;
+        tentacles?.RenderAndCollide();
         Camera camera = Camera.main;
-        float playerX = camera != null ? camera.WorldToViewportPoint(playerCollider.bounds.center).x : 0.3f;
+        float playerX = camera != null ? camera.WorldToViewportPoint(PlayerHurtbox.BoundsFor(playerCollider).center).x : 0.3f;
         // Wait for the visible edge to reach the player; distance loss must not
         // make the player disappear ahead of the smoothly advancing curtain.
-        float playerY = camera != null ? camera.WorldToViewportPoint(playerCollider.bounds.center).y : 0.5f;
+        float playerY = camera != null ? camera.WorldToViewportPoint(PlayerHurtbox.BoundsFor(playerCollider).center).y : 0.5f;
         if (curtainShape.EdgeAt(playerY) >= Mathf.Clamp01(playerX)) player.Die();
     }
 
@@ -406,8 +462,16 @@ public class GameModeController : MonoBehaviour
             frozenFov = frozenCamera.fieldOfView;
             frozenOrthoSize = frozenCamera.orthographicSize;
         }
-        Renderer body = player.GetComponentInChildren<Renderer>();
-        if (body != null) EmitSwallow(body);
+        if (Camera.main != null && playerCollider != null)
+        {
+            // Resolve the current skin before hiding it. The original green mesh is disabled.
+            Color skinColor = CharacterAppearanceColor.Dominant(player.transform);
+            Bounds bounds = PlayerHurtbox.BoundsFor(playerCollider);
+            Vector3 point = Camera.main.WorldToViewportPoint(bounds.center);
+            curtainShape.React(point.y);
+            particles.Burst(new Vector2(curtainShape.EdgeAt(point.y), Mathf.Clamp01(point.y)),
+                skinColor, swallowParticleCount, swallowParticleLifetime);
+        }
         foreach (Renderer renderer in player.GetComponentsInChildren<Renderer>()) renderer.enabled = false;
         foreach (Collider collider in player.GetComponentsInChildren<Collider>()) collider.enabled = false;
         var movement = player.GetComponent<PlayerVerticalMovement>();
@@ -417,6 +481,7 @@ public class GameModeController : MonoBehaviour
 
     void LateUpdate()
     {
+        ResolveBodyContact();
         if(VehicleEscapeActive&&!swallowing)vehicleEscape.LateUpdate();
         if (!swallowing || frozenCamera == null) return;
         frozenCamera.transform.SetPositionAndRotation(frozenCameraPosition, frozenCameraRotation);
@@ -604,6 +669,28 @@ public class GameModeController : MonoBehaviour
 
         menu = Panel("Main Menu", root.transform, Color.clear).gameObject;
         Button("Start Game", "ESCAPE FATE", 0);
+        // Small prototype controls share the button's right-side anchor. Each label
+        // falls independently when the start button is dragged into the curtain.
+        menuControlBackdrop = Panel("Control Hint Backdrop", menu.transform,
+            new Color(.08f, .12f, .16f, .95f));
+        menuControlBackdrop.anchorMin = menuControlBackdrop.anchorMax = startButtonRect.anchorMin;
+        menuControlBackdrop.sizeDelta = new Vector2(400f, 112f);
+        menuControlBackdrop.anchoredPosition = new Vector2(0f, -100f);
+        string[] controls = { "SPACE  JUMP", "HOLD S  SLIDE", "HOLD SHIFT  SPRINT", "CTRL  DASH", "QTE  FOLLOW PROMPTS" };
+        menuControlHints = new TMP_Text[controls.Length];
+        menuControlPositions = new Vector2[controls.Length];
+        for (int i = 0; i < controls.Length; i++)
+        {
+            Vector2 position = i == 4 ? new Vector2(0, -128f)
+                : new Vector2(i % 2 == 0 ? -100f : 100f, -69f - (i / 2) * 31f);
+            menuControlPositions[i] = position;
+            TMP_Text hint = Text("Control Hint " + i, menu.transform, controls[i], position,
+                new Vector2(i == 4 ? 390f : 195f, 28f), i == 4 ? 16 : 18);
+            hint.rectTransform.anchorMin = hint.rectTransform.anchorMax = startButtonRect.anchorMin;
+            if (menuFont != null) hint.font = menuFont;
+            hint.color = new Color(1f, 1f, 1f, .85f);
+            menuControlHints[i] = hint;
+        }
         var devour = new GameObject("Menu Devouring Tentacles", typeof(RectTransform), typeof(CanvasRenderer), typeof(MenuDevourGraphic));
         devour.transform.SetParent(menu.transform, false);
         var devourRect = devour.GetComponent<RectTransform>();
@@ -612,6 +699,14 @@ public class GameModeController : MonoBehaviour
         menuDevour = devour.GetComponent<MenuDevourGraphic>();
         menuDevour.raycastTarget = false;
         devour.SetActive(false);
+
+        var flashObject = new GameObject("Injury Edge Flash", typeof(RectTransform), typeof(CanvasRenderer), typeof(InjuryVignetteGraphic));
+        flashObject.transform.SetParent(root.transform, false);
+        var flashRect = flashObject.GetComponent<RectTransform>();
+        flashRect.anchorMin = Vector2.zero; flashRect.anchorMax = Vector2.one;
+        flashRect.offsetMin = flashRect.offsetMax = Vector2.zero;
+        injuryFlash = flashObject.GetComponent<InjuryVignetteGraphic>();
+        injuryFlash.raycastTarget = false;
     }
 
     private RectTransform Panel(string name, Transform parent, Color color)
@@ -646,7 +741,7 @@ public class GameModeController : MonoBehaviour
     private void Button(string name, string label, float y)
     {
         var rect = Panel(name, menu.transform, new Color(0.14f, 0.19f, 0.24f));
-        float playerX = Camera.main != null ? Camera.main.WorldToViewportPoint(playerCollider.bounds.center).x : 0.25f;
+        float playerX = Camera.main != null ? Camera.main.WorldToViewportPoint(PlayerHurtbox.BoundsFor(playerCollider).center).x : 0.25f;
         rect.anchorMin = rect.anchorMax = new Vector2(Mathf.Clamp(1f - playerX, 0.6f, 0.78f), 0.5f);
         rect.sizeDelta = new Vector2(360, 65);
         rect.anchoredPosition = new Vector2(0, y);

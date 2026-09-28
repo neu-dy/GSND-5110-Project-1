@@ -27,8 +27,11 @@ public class LoseCondition : MonoBehaviour
     }
 
     void OnTriggerEnter(Collider other)
+        => HitObstacle(other);
+
+    public void HitObstacle(Collider other)
     {
-        if (HasLost || !other.enabled || !other.CompareTag("Obstacle") || (modes != null && !modes.IsPlaying)) return;
+        if (HasLost || other == null || !other.enabled || !other.CompareTag("Obstacle") || (modes != null && !modes.IsPlaying)) return;
         var movement = other.GetComponentInParent<ObstacleMovement>();
         // Any contact disqualifies the whole obstacle from earning a dodge reward.
         if (movement != null)

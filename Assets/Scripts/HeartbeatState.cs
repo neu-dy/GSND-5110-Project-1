@@ -31,10 +31,11 @@ public sealed class HeartbeatState
     public HeartbeatState Copy() => (HeartbeatState)MemberwiseClone();
 
     public void Tick(float dt, float danger, bool exerting, float rise, float recovery, float response,
-        bool recoveryAllowed = true)
+        bool recoveryAllowed = true, float minimumBaseBpm = 0f)
     {
         if (dt <= 0f) return;
-        float target = RestBpm + (ThreatBpm - RestBpm) * Math.Max(0f, Math.Min(1f, danger));
+        float target = Math.Max(RestBpm + (ThreatBpm - RestBpm) * Math.Max(0f, Math.Min(1f, danger)),
+            Math.Max(RestBpm, Math.Min(ThreatBpm, minimumBaseBpm)));
         float delta = target - BaseBpm;
         BaseBpm += Math.Sign(delta) * Math.Min(Math.Abs(delta), Math.Max(.1f, response) * dt);
         // This debt fades with elapsed game time, never with the ordinary recovery rate.
@@ -54,6 +55,19 @@ public sealed class HeartbeatState
             Exertion -= Math.Max(.1f, recovery) * recoveryTime;
         }
         Exertion = Math.Max(0f, Math.Min(LimitBpm - BaseBpm, Exertion));
+        RefreshOverheat();
+    }
+
+    // A dash is one short pulse of effort, subject to the same overload and recovery rules.
+    public void AddExertion(float bpm)
+    {
+        Exertion = Math.Max(0f, Math.Min(LimitBpm - BaseBpm, Exertion + Math.Max(0f, bpm)));
+        RecoveryDelayRemaining = RecoveryDelay;
+        RefreshOverheat();
+    }
+
+    private void RefreshOverheat()
+    {
         if (Overheated)
         {
             if (Bpm <= ResumeBpm) Overheated = false;

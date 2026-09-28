@@ -58,7 +58,7 @@ public sealed class FallingObstacleDirector
         public Renderer body;
         public DropWarningGraphic warning;
         public Vector3 position;
-        public Bounds previousPlayer;
+        public readonly Bounds[] previousPlayer = new Bounds[PlayerHurtbox.MaximumParts];
         public bool finished;
     }
     private readonly ObstacleSpawner owner;
@@ -100,9 +100,9 @@ public sealed class FallingObstacleDirector
         if(cooldown>0||modes.RunDistanceMeters<settings.firstDropMeters||modes.TentaclesBlockSpawns)return;
         waiting=true;
         if(player==null||sprint==null||vertical==null||Camera.main==null){waiting=false;return;}
-        if(owner.HasPendingObstacle(sprint.HomePosition.x-player.bounds.extents.x))return;
+        if(owner.HasPendingObstacle(sprint.HomePosition.x-PlayerHurtbox.BoundsFor(player).extents.x))return;
         plan=OverheadPressure.Choose(settings.pressure,modes.RunDistanceMeters,modes.RunElapsedSeconds,
-            player.bounds.center.x,sprint.HorizontalHomeX,sprint.HorizontalLimitX,settings.width,settings.warningSeconds,settings.fallSeconds,
+            PlayerHurtbox.BoundsFor(player).center.x,sprint.HorizontalHomeX,sprint.HorizontalLimitX,settings.width,settings.warningSeconds,settings.fallSeconds,
             UnityEngine.Random.value<settings.pressure.simultaneousChance,UnityEngine.Random.value<.5f,
             (lanes,warning,total)=>sprint.CanAvoidOverhead(lanes,settings.width*.5f,warning,total,settings.reactionSeconds,settings.escapePadding)
                 && modes.CanAffordCrouch(total,0,settings.curtainSafetyReserve));
@@ -113,14 +113,14 @@ public sealed class FallingObstacleDirector
     {
         waiting=false;hitThisWave=false;elapsed=0;CurrentPhase=Phase.Warning;
         LockedX=plan.Centers[0];groundY=vertical.GroundY;lockedFall=settings.fallSeconds;
-        size=new Vector3(settings.width,settings.height,Mathf.Max(.7f,player.bounds.size.z));
-        float depth=Camera.main.WorldToViewportPoint(player.bounds.center).z;
-        startY=Mathf.Max(player.bounds.max.y+3f,Camera.main.ViewportToWorldPoint(new Vector3(.5f,1.05f,depth)).y+size.y);
+        size=new Vector3(settings.width,settings.height,Mathf.Max(.7f,PlayerHurtbox.BoundsFor(player).size.z));
+        float depth=Camera.main.WorldToViewportPoint(PlayerHurtbox.BoundsFor(player).center).z;
+        startY=Mathf.Max(PlayerHurtbox.BoundsFor(player).max.y+3f,Camera.main.ViewportToWorldPoint(new Vector3(.5f,1.05f,depth)).y+size.y);
         endY=groundY+size.y*.5f;closest=float.PositiveInfinity;
         for(int i=0;i<plan.Centers.Length;i++)
         {
-            Drop d=drops[i];d.finished=false;d.previousPlayer=player.bounds;
-            d.position=new Vector3(plan.Centers[i],startY,player.bounds.center.z);
+            Drop d=drops[i];d.finished=false;RecordBody(d);
+            d.position=new Vector3(plan.Centers[i],startY,PlayerHurtbox.BoundsFor(player).center.z);
             d.cube=GameObject.CreatePrimitive(PrimitiveType.Cube);d.cube.name="Falling Obstacle "+(i+1);
             d.cube.GetComponent<Collider>().enabled=false;d.cube.transform.position=d.position;d.cube.transform.localScale=size;
             d.body=d.cube.GetComponent<Renderer>();d.body.enabled=false;
@@ -149,22 +149,32 @@ public sealed class FallingObstacleDirector
         {
             Drop d=drops[i];if(d.finished)continue;
             float warning=plan.Warning+i*plan.Stagger;
-            if(elapsed<warning){d.previousPlayer=player.bounds;RefreshWarning(d,i,false);done=false;continue;}
+            if(elapsed<warning){RecordBody(d);RefreshWarning(d,i,false);done=false;continue;}
             CurrentPhase=Phase.Falling;d.body.enabled=true;
             Vector3 previous=d.position;float t=Mathf.Clamp01((elapsed-warning)/lockedFall);
             d.position.y=Mathf.Lerp(startY,endY,t*t);d.cube.transform.position=d.position;
-            Bounds target=player.bounds;
-            if(SweptHit(previous,d.position,size,d.previousPlayer,target))
+            bool hit=false;
+            for(int part=0;part<PlayerHurtbox.PartCount(player);part++)
+            {
+                Bounds target=PlayerHurtbox.PartBounds(player,part);
+                hit |= SweptHit(previous,d.position,size,d.previousPlayer[part],target);
+                if(d.position.y-size.y*.5f<=target.max.y && previous.y+size.y*.5f>=target.min.y)
+                    closest=Mathf.Min(closest,Mathf.Max(0,Mathf.Abs(target.center.x-plan.Centers[i])-target.extents.x-size.x*.5f));
+            }
+            if(hit)
             {
                 hitThisWave=true;modes.TakeHit();Remove(d,true);
                 continue;
             }
-            if(d.position.y-size.y*.5f<=target.max.y && previous.y+size.y*.5f>=target.min.y)
-                closest=Mathf.Min(closest,Mathf.Max(0,Mathf.Abs(target.center.x-plan.Centers[i])-target.extents.x-size.x*.5f));
-            d.previousPlayer=target;RefreshWarning(d,i,true);
+            RecordBody(d);RefreshWarning(d,i,true);
             if(t>=1)Remove(d,true);else done=false;
         }
         if(done)Finish(!hitThisWave);
+    }
+    private void RecordBody(Drop d)
+    {
+        for(int part=0;part<PlayerHurtbox.PartCount(player);part++)
+            d.previousPlayer[part]=PlayerHurtbox.PartBounds(player,part);
     }
     private void RefreshWarning(Drop d,int index,bool falling)
     {

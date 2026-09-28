@@ -29,6 +29,8 @@ public sealed class VehicleEscapeController : IDisposable
     private readonly Vector3 cameraPosition;
     private readonly float cameraFov,cameraSize,entryEdge,safeEdge;
     private float catchEdge,segmentEdge,segmentStarted;
+    private float retreatFromEdge;
+    private bool retreatStarted;
     private readonly int originalCurtainOrder;
     private float elapsed,pulse,errorFlash,dustClock;
     private bool disposed,focusPaused,skipResume,failedHandled,returned,covering,boarded;
@@ -56,12 +58,12 @@ public sealed class VehicleEscapeController : IDisposable
             if(i>0&&next>=sequence[i-1])next++;sequence[i]=next;
         }
         State=new VehicleEscapeState(config,sequence);
-        float depth=camera.WorldToViewportPoint(player.bounds.center).z;
+        float depth=camera.WorldToViewportPoint(PlayerHurtbox.BoundsFor(player).center).z;
         float left=camera.ViewportToWorldPoint(new Vector3(0,.5f,depth)).x;
         float right=camera.ViewportToWorldPoint(new Vector3(1,.5f,depth)).x;
-        float width=(right-left)*.27f,height=player.bounds.size.y*.65f;
-        float ground=vertical!=null?vertical.GroundY:player.bounds.min.y;
-        float vehicleDepth=Mathf.Max(1f,player.bounds.size.z*1.6f);
+        float width=(right-left)*.27f,height=PlayerHurtbox.BoundsFor(player).size.y*.65f;
+        float ground=vertical!=null?vertical.GroundY:PlayerHurtbox.BoundsFor(player).min.y;
+        float vehicleDepth=Mathf.Max(1f,PlayerHurtbox.BoundsFor(player).size.z*1.6f);
         // Forward is +X and up is +Y, so vehicle-left is +Z (away from the camera).
         // A left-hand-drive car is entered through its far-side front door.
         vehicleParked=new Vector3(camera.ViewportToWorldPoint(new Vector3(.48f,.5f,depth)).x,ground+height*.5f,
@@ -69,9 +71,9 @@ public sealed class VehicleEscapeController : IDisposable
         vehicleStart=vehicleParked+Vector3.right*(right-left)*.75f;
         vehicleEnd=vehicleParked+Vector3.right*(right-left)*1.1f;
         driverSeat=vehicleParked+new Vector3(width*.23f,0,vehicleDepth*.25f);
-        door=new Vector3(driverSeat.x,playerStart.y,vehicleParked.z+vehicleDepth*.5f+player.bounds.extents.z+.12f);
-        keyAnchor=door+(player.bounds.center-playerStart)
-            +new Vector3(player.bounds.extents.x,player.bounds.size.y*.25f,0);
+        door=new Vector3(driverSeat.x,playerStart.y,vehicleParked.z+vehicleDepth*.5f+PlayerHurtbox.BoundsFor(player).extents.z+.12f);
+        keyAnchor=door+(PlayerHurtbox.BoundsFor(player).center-playerStart)
+            +new Vector3(PlayerHurtbox.BoundsFor(player).extents.x,PlayerHurtbox.BoundsFor(player).size.y*.25f,0);
         vehicle=GameObject.CreatePrimitive(PrimitiveType.Cube);vehicle.name="Escape Vehicle (Prototype)";
         vehicle.GetComponent<Collider>().enabled=false;
         vehicle.transform.localScale=new Vector3(width,height,vehicleDepth);
@@ -235,11 +237,27 @@ public sealed class VehicleEscapeController : IDisposable
         }
         else if((int)phase>(int)VehicleEscapeState.Phase.Departure&&phase!=VehicleEscapeState.Phase.Failed)
         {vehicle.transform.position=vehicleEnd;player.transform.position=vehicle.transform.TransformPoint(new Vector3(.23f,0,.25f));}
+        // Let the curtain visibly withdraw as the car pulls away, then hold the
+        // open frame for the false safety message before the final sweep.
+        const float reliefEdge = .06f;
+        if (phase == VehicleEscapeState.Phase.Departure)
+        {
+            if (!retreatStarted)
+            {
+                retreatStarted = true;
+                retreatFromEdge = curtain.anchorMax.x;
+            }
+            front = Mathf.Lerp(retreatFromEdge, Mathf.Min(retreatFromEdge, reliefEdge),
+                Mathf.SmoothStep(0f, 1f, p));
+        }
+        else if ((int)phase >= (int)VehicleEscapeState.Phase.SafeMessage && phase != VehicleEscapeState.Phase.Failed)
+            front = Mathf.Min(retreatFromEdge, reliefEdge);
         bool surge=(int)phase>=(int)VehicleEscapeState.Phase.Surge&&phase!=VehicleEscapeState.Phase.Failed;
         if(surge)
         {
             if(!covering){covering=true;curtain.SetAsLastSibling();}
-            front=phase==VehicleEscapeState.Phase.Surge?Mathf.Lerp(front,1,p*p):1;
+            front=phase==VehicleEscapeState.Phase.Surge
+                ?Mathf.Lerp(front,1f,Mathf.SmoothStep(0f,1f,p)):1f;
         }
         curtain.anchorMax=new Vector2(front,1);curtainShape.ForwardLimit=front;curtainShape.RefreshEdge();
         bool lockpick=phase==VehicleEscapeState.Phase.Lockpick,ignition=phase==VehicleEscapeState.Phase.Ignition;

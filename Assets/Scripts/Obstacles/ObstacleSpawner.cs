@@ -1,7 +1,7 @@
 using UnityEngine;
 using TMPro;
 
-[DefaultExecutionOrder(300)] // Falling collision observes this frame's jump and sprint input.
+[DefaultExecutionOrder(1300)] // Collision observes evaluated animation and body shapes.
 public class ObstacleSpawner : MonoBehaviour
 {
     // [ -- ObstacleSpawner -- ]
@@ -30,6 +30,9 @@ public class ObstacleSpawner : MonoBehaviour
     [SerializeField] private GameObject shortHeadObstacle;
     [SerializeField, Min(0f)] private float crouchSafetyReserve = 4f;
     [SerializeField, Min(0f)] private float crouchTimingPadding = 0.15f;
+
+    [Header("Curtain Corruption - Right-Edge Obstacles")]
+    [SerializeField] private ObstacleMorph.Settings curtainMorph = new ObstacleMorph.Settings();
 
     [Header("Difficulty - Successful Dodges")]
     [SerializeField] private LoseCondition player;
@@ -67,20 +70,25 @@ public class ObstacleSpawner : MonoBehaviour
     {
         return player != null && !player.HasLost && playerCollider != null
             && obstacleCollider != null && Time.timeScale > 0f
-            && obstacleCollider.bounds.max.x < playerCollider.bounds.min.x;
+            && obstacleCollider.bounds.max.x < PlayerHurtbox.BoundsFor(playerCollider).min.x;
     }
 
     public float MeasureClearance(Bounds previous, Bounds current)
     {
         if (playerCollider == null) return float.PositiveInfinity;
-        Bounds target = playerCollider.bounds;
-        // Sweep horizontal travel so fast obstacles cannot skip the sampling zone.
-        if (Mathf.Min(previous.min.x, current.min.x) > target.max.x
-            || Mathf.Max(previous.max.x, current.max.x) < target.min.x)
-            return float.PositiveInfinity;
-        float y = Mathf.Max(0f, Mathf.Max(current.min.y - target.max.y, target.min.y - current.max.y));
-        float z = Mathf.Max(0f, Mathf.Max(current.min.z - target.max.z, target.min.z - current.max.z));
-        return Mathf.Sqrt(y * y + z * z);
+        float closest = float.PositiveInfinity;
+        for (int part = 0; part < PlayerHurtbox.PartCount(playerCollider); part++)
+        {
+            Bounds target = PlayerHurtbox.PartBounds(playerCollider, part);
+            // Sweep horizontal travel so fast obstacles cannot skip the sampling zone.
+            if (Mathf.Min(previous.min.x, current.min.x) > target.max.x
+                || Mathf.Max(previous.max.x, current.max.x) < target.min.x)
+                continue;
+            float y = Mathf.Max(0f, Mathf.Max(current.min.y - target.max.y, target.min.y - current.max.y));
+            float z = Mathf.Max(0f, Mathf.Max(current.min.z - target.max.z, target.min.z - current.max.z));
+            closest = Mathf.Min(closest, Mathf.Sqrt(y * y + z * z));
+        }
+        return closest;
     }
 
     public void RegisterDodge(float clearance)
@@ -148,7 +156,6 @@ public class ObstacleSpawner : MonoBehaviour
         if (Time.timeScale <= 0f) return;
         if (player != null && player.HasLost)
             return;
-        falling?.Tick(Time.deltaTime);
         if ((modes != null && modes.TentaclesBlockSpawns) || (falling != null && falling.BlocksSpawns))
         {
             // Resume with a full approach interval, never a queued instant spawn.
@@ -164,6 +171,12 @@ public class ObstacleSpawner : MonoBehaviour
         {
             SpawnAfterDeload();
         }
+    }
+
+    void LateUpdate()
+    {
+        if (modes != null && modes.IsPlaying && !modes.VehicleEscapeActive && Time.timeScale > 0f)
+            falling?.Tick(Time.deltaTime);
     }
 
     // Can have multiple obstacles on screen at once
@@ -234,7 +247,24 @@ public class ObstacleSpawner : MonoBehaviour
         currentObstacle = Instantiate(selected);
         ObstacleMovement movement = currentObstacle.GetComponent<ObstacleMovement>();
         if (movement != null)
+        {
             movement.SetSpawner(this);
+            if (curtainMorph.enabled && movement.MorphKind != ObstacleMovement.CorruptionKind.None
+                && Random.value < curtainMorph.chance)
+            {
+                ObstacleMorph morph = currentObstacle.AddComponent<ObstacleMorph>();
+                morph.Initialize(movement, this, playerCollider, modes, curtainMorph);
+            }
+        }
+    }
+
+    public bool CanSafelyWidenHead(Bounds head, float extension, float speed)
+    {
+        if (modes == null || playerCollider == null || speed <= 0f) return false;
+        Bounds body = PlayerHurtbox.BoundsFor(playerCollider);
+        float arrival = Mathf.Max(0f, (head.min.x - body.max.x) / speed - crouchTimingPadding);
+        float duration = (head.size.x + extension + body.size.x) / speed + 2f * crouchTimingPadding;
+        return modes.CanAffordCrouch(arrival, duration, crouchSafetyReserve);
     }
 
     // Sets up the range of possible random values for spawn rate
@@ -252,8 +282,8 @@ public class ObstacleSpawner : MonoBehaviour
         if (depth <= Camera.main.nearClipPlane) return false;
         // Same right-edge spawn placement used by ObstacleMovement.
         float leadingEdge = Camera.main.ViewportToWorldPoint(new Vector3(1f, 0.5f, depth)).x + 0.5f;
-        float arrival = Mathf.Max(0f, (leadingEdge - playerCollider.bounds.max.x) / speed - crouchTimingPadding);
-        float duration = (Mathf.Abs(size.x) + playerCollider.bounds.size.x) / speed + 2f * crouchTimingPadding;
+        float arrival = Mathf.Max(0f, (leadingEdge - PlayerHurtbox.BoundsFor(playerCollider).max.x) / speed - crouchTimingPadding);
+        float duration = (Mathf.Abs(size.x) + PlayerHurtbox.BoundsFor(playerCollider).size.x) / speed + 2f * crouchTimingPadding;
         return modes.CanAffordCrouch(arrival, duration, crouchSafetyReserve);
     }
 
@@ -269,5 +299,7 @@ public class ObstacleSpawner : MonoBehaviour
     {
         if (fallingObstacles == null) fallingObstacles = new FallingObstacleDirector.Settings();
         fallingObstacles.Validate();
+        if (curtainMorph == null) curtainMorph = new ObstacleMorph.Settings();
+        curtainMorph.Validate();
     }
 }

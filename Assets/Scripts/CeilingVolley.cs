@@ -40,11 +40,11 @@ public sealed class CeilingVolley
         Camera camera=Camera.main;
         for(int i=0;i<plan.Centers.Length;i++)
         {
-            Vector3 p=new Vector3(plan.Centers[i],player.bounds.center.y,player.bounds.center.z);
+            Vector3 p=new Vector3(plan.Centers[i],PlayerHurtbox.BoundsFor(player).center.y,PlayerHurtbox.BoundsFor(player).center.z);
             x[i]=camera.WorldToViewportPoint(p).x;
             radius[i]=Mathf.Abs(camera.WorldToViewportPoint(p+Vector3.right*settings.ceilingHalfWidth).x-x[i]);
             landing[i]=CurtainTentacles.ViewportBounds(camera,new Bounds(new Vector3(p.x,ground+.02f,p.z),
-                new Vector3(settings.ceilingHalfWidth*2,.02f,Mathf.Max(.7f,player.bounds.size.z))));
+                new Vector3(settings.ceilingHalfWidth*2,.02f,Mathf.Max(.7f,PlayerHurtbox.BoundsFor(player).size.z))));
         }
     }
     public void Hide()
@@ -60,7 +60,7 @@ public sealed class CeilingVolley
     {
         if(plan==null||Camera.main==null)return;
         Physics.SyncTransforms();float elapsed=state.AttackElapsed;
-        Rect body=CurtainTentacles.ViewportBounds(Camera.main,player.bounds);
+        Rect body=CurtainTentacles.ViewportBounds(Camera.main,PlayerHurtbox.BoundsFor(player));
         for(int i=0;i<plan.Centers.Length;i++)
         {
             float warning=plan.Warning+i*plan.Stagger,t=elapsed-warning;
@@ -81,18 +81,23 @@ public sealed class CeilingVolley
             if(previousTime-warning<=settings.ceilingExtendSeconds+settings.ceilingHoldSeconds && t>=settings.ceilingExtendSeconds)
                 collisionTip=settings.ceilingTipViewport;
             graphics[i].SetVerticalShape(1.01f,collisionTip,x[i],radius[i]*1.6f,radius[i],false);
-            if(collisionTip<=body.yMax)
+            bool hit=false;
+            for(int part=0;part<PlayerHurtbox.PartCount(player);part++)
             {
-                Exposed=true;
-                float gap=Mathf.Max(0,Mathf.Max(body.xMin-x[i]-radius[i],x[i]-radius[i]-body.xMax));
-                Closest=Mathf.Min(Closest,gap*settings.ceilingHalfWidth/Mathf.Max(.0001f,radius[i]));
+                Rect target=CurtainTentacles.ViewportBounds(Camera.main,PlayerHurtbox.PartBounds(player,part));
+                if(collisionTip<=target.yMax)
+                {
+                    Exposed=true;
+                    float gap=Mathf.Max(0,Mathf.Max(target.xMin-x[i]-radius[i],x[i]-radius[i]-target.xMax));
+                    Closest=Mathf.Min(Closest,gap*settings.ceilingHalfWidth/Mathf.Max(.0001f,radius[i]));
+                }
+                hit |= graphics[i].Intersects(target);
             }
             obstacles.Clear();foreach(var obstacle in ObstacleMovement.Active)if(obstacle!=null)obstacles.Add(obstacle);
             foreach(var obstacle in obstacles)
                 if(obstacle!=null)
                     foreach(var renderer in obstacle.GetComponentsInChildren<Renderer>())
                         if(renderer.enabled&&graphics[i].Intersects(CurtainTentacles.ViewportBounds(Camera.main,renderer.bounds))){obstacle.BreakApart();break;}
-            bool hit=graphics[i].Intersects(body);
             graphics[i].SetVerticalShape(1.01f,tip,x[i],radius[i]*1.6f,radius[i],false);
             if(hit&&!contacted[i])
             {

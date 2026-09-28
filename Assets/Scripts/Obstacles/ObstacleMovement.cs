@@ -1,9 +1,13 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-[DefaultExecutionOrder(200)]
+[DefaultExecutionOrder(1200)]
 public class ObstacleMovement : MonoBehaviour
 {
+    public enum CorruptionKind { None, Low, High, Choice }
+    [Header("Curtain Corruption")]
+    [SerializeField] private CorruptionKind corruptionKind;
+    public CorruptionKind MorphKind => corruptionKind;
     [Header("Obstacle Movement")]
     [SerializeField] private Vector3 spawnPosition;
     [SerializeField] private float obstacleSpeed = 6f;
@@ -45,6 +49,22 @@ public class ObstacleMovement : MonoBehaviour
 
     public void MarkPlayerHit() => HitPlayer = true;
     public void SetSpawner(ObstacleSpawner owner) => spawner = owner;
+
+    // A growing black section must participate in the same hit, dodge, break and swallow rules.
+    public void RegisterAddedPart(Collider part, Renderer body)
+    {
+        if (part == null || body == null || broken) return;
+        int colliderIndex = obstacleColliders.Length;
+        System.Array.Resize(ref obstacleColliders, colliderIndex + 1);
+        System.Array.Resize(ref previousBounds, colliderIndex + 1);
+        obstacleColliders[colliderIndex] = part;
+        previousBounds[colliderIndex] = part.bounds;
+        int bodyIndex = bodies.Length;
+        System.Array.Resize(ref bodies, bodyIndex + 1);
+        System.Array.Resize(ref swallowed, bodyIndex + 1);
+        System.Array.Resize(ref swallowEmitted, bodyIndex + 1);
+        bodies[bodyIndex] = body;
+    }
 
     // Use the whole group for passing/spawning, but each solid part for clearance.
     // An enclosing collision box would incorrectly fill an airborne opening.
@@ -117,6 +137,7 @@ public class ObstacleMovement : MonoBehaviour
     void Update()
     {
         if (Time.timeScale <= 0f) return;
+        Physics.SyncTransforms();
         for (int i = 0; i < obstacleColliders.Length; i++)
             previousBounds[i] = obstacleColliders[i].bounds;
         float multiplier = spawner != null ? spawner.SpeedMultiplier : 1f;
@@ -139,7 +160,13 @@ public class ObstacleMovement : MonoBehaviour
             return;
         }
 
-        if (!countedAsDodged && spawner != null)
+        if (transform.position.x <= despawnX) Destroy(gameObject);
+    }
+
+    void LateUpdate()
+    {
+        if (broken || Time.timeScale <= 0f || spawner == null) return;
+        if (!countedAsDodged)
         {
             for (int i = 0; i < obstacleColliders.Length; i++)
             {
@@ -154,6 +181,5 @@ public class ObstacleMovement : MonoBehaviour
                     spawner.RegisterDodge(closestClearance);
             }
         }
-        if (transform.position.x <= despawnX) Destroy(gameObject);
     }
 }

@@ -144,10 +144,10 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSprint
   sprintKey: 304
-  maximumRightSpeed: 2.4
-  acceleration: 6
-  returnSpeed: 1.1
-  returnAcceleration: 4.5
+  maximumRightSpeed: 2.7
+  acceleration: 6.5
+  returnSpeed: 1.3
+  returnAcceleration: 5.2
   rightmostViewport: 0.5
   restingBpm: 80
   threatBpm: 135

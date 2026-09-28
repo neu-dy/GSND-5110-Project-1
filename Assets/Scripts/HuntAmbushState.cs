@@ -20,6 +20,11 @@ public sealed class HuntAmbushState
         public float lungeSeconds=.28f;
         public float readSeconds=.18f;
         public float responseSeconds=.9f;
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.Tooltip("Extra time for only the first key of the first tentacle QTE in each run.")]
+        [UnityEngine.Range(0f,.5f)]
+#endif
+        public float firstPromptBonusSeconds=.18f;
         public float evadeSeconds=.22f;
         public float bulletTimeScale=.12f;
         public float bindSeconds=.35f;
@@ -39,7 +44,9 @@ public sealed class HuntAmbushState
         {
             huntProgress=Clamp(huntProgress,.2f,.9f);chancePerHunt=Clamp(chancePerHunt,0,1);
             lungeSeconds=Math.Max(.15f,lungeSeconds);readSeconds=Math.Max(.1f,readSeconds);
-            responseSeconds=Math.Max(.4f,responseSeconds);evadeSeconds=Math.Max(.15f,evadeSeconds);
+            responseSeconds=Math.Max(.4f,responseSeconds);
+            firstPromptBonusSeconds=Clamp(firstPromptBonusSeconds,0f,.5f);
+            evadeSeconds=Math.Max(.15f,evadeSeconds);
             bulletTimeScale=Clamp(bulletTimeScale,.03f,.5f);bindSeconds=Math.Max(.2f,bindSeconds);
             struggleSeconds=Math.Max(1f,struggleSeconds);pressesToEscape=Math.Max(2,Math.Min(20,pressesToEscape));
             releaseSeconds=Math.Max(.25f,releaseSeconds);recoverySeconds=Math.Max(.7f,recoverySeconds);
@@ -58,31 +65,63 @@ public sealed class HuntAmbushState
     public bool Engaged => Current!=Phase.Idle;
     public bool Finished => Current==Phase.Complete || Current==Phase.Dead;
     public int RequiredKey => sequence[Step];
+    public float CurrentResponseSeconds => settings.responseSeconds
+        + (firstOfRun && Step==0 ? settings.firstPromptBonusSeconds : 0f);
     public float Progress => Clamp(PhaseTime/Duration,0,1);
+    // The cue clock and the approaching tip share this exact normalized clock.
+    public float ReactionProgress => Clamp((PhaseTime+(Current==Phase.Response?settings.readSeconds:0f))
+        /(settings.readSeconds+CurrentResponseSeconds),0,1);
+    public float StrikeExtension
+    {
+        get
+        {
+            switch(Current)
+            {
+                case Phase.Lunge:return .76f*Smooth(Progress);
+                case Phase.Focus:
+                case Phase.Response:return .76f+.24f*ReactionProgress;
+                case Phase.Evade:return committedExtension*(1f-Smooth(Progress));
+                case Phase.Bind:return committedExtension+(1f-committedExtension)*Smooth(Clamp(Progress/.35f,0,1));
+                default:return 1f;
+            }
+        }
+    }
     public float EscapeProgress => EscapePresses/(float)settings.pressesToEscape;
     public float TimeScale => Current==Phase.Focus || Current==Phase.Response ? settings.bulletTimeScale : 1f;
     public Settings Configuration => settings;
     private readonly Settings settings;
     private readonly int[] sequence=new int[3];
+    private float committedExtension;
+    private bool firstOfRun;
     public HuntAmbushState(Settings configuration)
     {
         settings=(configuration ?? new Settings()).Copy();settings.Validate();
     }
-    public void Begin(int first,int second,int third)
+    public void Begin(int first,int second,int third,bool firstAmbushOfRun=false)
     {
+        firstOfRun=firstAmbushOfRun;
         sequence[0]=first;sequence[1]=second;sequence[2]=third;
-        Step=EscapePresses=0;WasBound=false;PressPulse=0;Enter(Phase.Lunge);
+        Step=EscapePresses=0;WasBound=false;PressPulse=0;committedExtension=0;Enter(Phase.Lunge);
     }
     // key: -1=no edge, -2=wrong/simultaneous keys; a held key never calls this twice.
     public void Tick(float realSeconds,int key=-1,bool spaceDown=false)
     {
         if(!Engaged || Finished || realSeconds<=0)return;
         PressPulse=Math.Max(0,PressPulse-realSeconds*6f);
-        if(Current==Phase.Focus && key==RequiredKey) { PressPulse=1;Enter(Phase.Evade);return; }
-        if(Current==Phase.Response && key!=-1)
+        // Expiration wins a same-frame key. Advance the shared tip/ring clock BEFORE input.
+        if(Current==Phase.Focus || Current==Phase.Response)
         {
-            if(key==RequiredKey){PressPulse=1;Enter(Phase.Evade);}
-            else {WasBound=true;Enter(Phase.Bind);}
+            PhaseTime+=realSeconds;
+            if(Current==Phase.Response && PhaseTime>=Duration)
+            {WasBound=true;Enter(Phase.Bind);return;}
+            if(Current==Phase.Focus && PhaseTime>=Duration)
+            {
+                float remainder=PhaseTime-Duration;
+                Enter(Phase.Response);PhaseTime=remainder;
+                if(PhaseTime>=Duration){WasBound=true;Enter(Phase.Bind);return;}
+            }
+            if(key==RequiredKey){PressPulse=1;Enter(Phase.Evade);return;}
+            if(Current==Phase.Response && key!=-1){WasBound=true;Enter(Phase.Bind);return;}
             return;
         }
         if(Current==Phase.Struggle && spaceDown)
@@ -108,7 +147,11 @@ public sealed class HuntAmbushState
         }
     }
     public void Cancel(){Enter(Phase.Idle);PressPulse=0;}
-    private void Enter(Phase phase){Current=phase;PhaseTime=0;}
+    private void Enter(Phase phase)
+    {
+        if(phase==Phase.Evade || phase==Phase.Bind)committedExtension=StrikeExtension;
+        Current=phase;PhaseTime=0;
+    }
     private float Duration
     {
         get
@@ -117,7 +160,7 @@ public sealed class HuntAmbushState
             {
                 case Phase.Lunge:return settings.lungeSeconds;
                 case Phase.Focus:return settings.readSeconds;
-                case Phase.Response:return settings.responseSeconds;
+                case Phase.Response:return CurrentResponseSeconds;
                 case Phase.Evade:return settings.evadeSeconds;
                 case Phase.Bind:return settings.bindSeconds;
                 case Phase.Struggle:return settings.struggleSeconds;
@@ -129,4 +172,5 @@ public sealed class HuntAmbushState
         }
     }
     private static float Clamp(float v,float low,float high)=>Math.Max(low,Math.Min(high,v));
+    private static float Smooth(float value)=>value*value*(3f-2f*value);
 }
