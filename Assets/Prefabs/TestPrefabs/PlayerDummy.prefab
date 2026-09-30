@@ -146,8 +146,8 @@ MonoBehaviour:
   sprintKey: 304
   maximumRightSpeed: 2.7
   acceleration: 6.5
-  returnSpeed: 1.3
-  returnAcceleration: 5.2
+  returnSpeed: 1.5
+  returnAcceleration: 6
   rightmostViewport: 0.5
   restingBpm: 80
   threatBpm: 135

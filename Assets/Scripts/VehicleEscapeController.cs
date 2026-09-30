@@ -32,6 +32,8 @@ public sealed class VehicleEscapeController : IDisposable
     private float retreatFromEdge;
     private bool retreatStarted;
     private readonly int originalCurtainOrder;
+    private readonly int originalParticleOrder;
+    private bool[] swallowedLetters;
     private float elapsed,pulse,errorFlash,dustClock;
     private bool disposed,focusPaused,skipResume,failedHandled,returned,covering,boarded;
     private static readonly KeyCode[] Keyboard=(KeyCode[])Enum.GetValues(typeof(KeyCode));
@@ -102,6 +104,7 @@ public sealed class VehicleEscapeController : IDisposable
         segmentEdge=safeEdge;
         catchEdge=Mathf.Clamp01(doorX+Mathf.Max(.04f,curtainShape.Amplitude+.01f));
         originalCurtainOrder=curtain.GetSiblingIndex();
+        originalParticleOrder=particles!=null?particles.transform.GetSiblingIndex():-1;
         ui=new GameObject("Vehicle Escape UI",typeof(RectTransform));ui.transform.SetParent(curtain.parent,false);
         var rect=(RectTransform)ui.transform;rect.anchorMin=Vector2.zero;rect.anchorMax=Vector2.one;rect.offsetMin=rect.offsetMax=Vector2.zero;
         var frameObject=new GameObject("Vehicle Key Frame",typeof(RectTransform),typeof(CanvasRenderer),typeof(QteKeyGraphic));
@@ -111,7 +114,7 @@ public sealed class VehicleEscapeController : IDisposable
         prompt=Label("Vehicle Key",ui.transform,font,28,Color.white,new Vector2(.55f,.65f));
         prompt.enableAutoSizing=false;prompt.rectTransform.sizeDelta=new Vector2(150,55);
         prompt.outlineWidth=.3f;prompt.outlineColor=Color.black;
-        message=Label("Temporary Safety",ui.transform,font,34,new Color(.25f,1f,.42f),new Vector2(.57f,.62f));
+        message=Label("Temporary Safety",ui.transform,font,34,new Color(.25f,1f,.42f),new Vector2(.5f,.5f));
         message.text="YOU'RE SAFE. FOR NOW...";
         countdown=Label("Return Countdown",curtain.parent,font,24,new Color(.78f,.8f,.81f),new Vector2(.5f,.5f));
         Render(0);
@@ -255,7 +258,15 @@ public sealed class VehicleEscapeController : IDisposable
         bool surge=(int)phase>=(int)VehicleEscapeState.Phase.Surge&&phase!=VehicleEscapeState.Phase.Failed;
         if(surge)
         {
-            if(!covering){covering=true;curtain.SetAsLastSibling();}
+            if(!covering)
+            {
+                covering=true;
+                curtain.SetAsLastSibling();
+                // Keep only the safety line above the sweep so its glyphs can
+                // disappear one by one instead of vanishing behind the curtain.
+                ui.transform.SetAsLastSibling();
+                if(particles!=null)particles.transform.SetAsLastSibling();
+            }
             front=phase==VehicleEscapeState.Phase.Surge
                 ?Mathf.Lerp(front,1f,Mathf.SmoothStep(0f,1f,p)):1f;
         }
@@ -283,10 +294,52 @@ public sealed class VehicleEscapeController : IDisposable
             keyFrame.Show(keyPosition,ignition,keyStyle.reactionRingRadius,1-State.DeadlineProgress,scale,prompt.color);
         }
         else keyFrame.Hide();
-        message.gameObject.SetActive(phase==VehicleEscapeState.Phase.SafeMessage||phase==VehicleEscapeState.Phase.Surge);
+        bool showSafety=phase==VehicleEscapeState.Phase.SafeMessage||phase==VehicleEscapeState.Phase.Surge;
+        message.gameObject.SetActive(showSafety);
+        if(phase==VehicleEscapeState.Phase.Surge)DissolveSafetyMessage();
         countdown.gameObject.SetActive(phase==VehicleEscapeState.Phase.Countdown);
         if(phase==VehicleEscapeState.Phase.Countdown)
         {countdown.transform.SetAsLastSibling();countdown.text="Main menu in "+Mathf.CeilToInt(config.returnCountdownSeconds-State.PhaseSeconds)+"s";}
+    }
+    private void DissolveSafetyMessage()
+    {
+        message.ForceMeshUpdate();
+        TMP_TextInfo info=message.textInfo;
+        if(swallowedLetters==null||swallowedLetters.Length!=info.characterCount)
+            swallowedLetters=new bool[info.characterCount];
+        for(int i=0;i<info.characterCount;i++)
+        {
+            TMP_CharacterInfo character=info.characterInfo[i];
+            if(!character.isVisible)continue;
+            int materialIndex=character.materialReferenceIndex;
+            int vertexIndex=character.vertexIndex;
+            TMP_MeshInfo mesh=info.meshInfo[materialIndex];
+            if(!swallowedLetters[i])
+            {
+                Vector3 lower=RectTransformUtility.WorldToScreenPoint(null,
+                    message.rectTransform.TransformPoint(character.bottomLeft));
+                Vector3 upper=RectTransformUtility.WorldToScreenPoint(null,
+                    message.rectTransform.TransformPoint(character.topRight));
+                float left=Mathf.Min(lower.x,upper.x)/Screen.width;
+                float bottom=Mathf.Min(lower.y,upper.y)/Screen.height;
+                float top=Mathf.Max(lower.y,upper.y)/Screen.height;
+                curtainShape.EdgeRange(bottom,top,out _,out float leadingEdge);
+                if(leadingEdge>=left)
+                {
+                    swallowedLetters[i]=true;
+                    if(particles!=null)
+                        particles.Burst(new Vector2(left,(bottom+top)*.5f),message.color,3,.28f);
+                }
+            }
+            if(!swallowedLetters[i])continue;
+            for(int corner=0;corner<4;corner++)
+            {
+                Color32 color=mesh.colors32[vertexIndex+corner];
+                color.a=0;
+                mesh.colors32[vertexIndex+corner]=color;
+            }
+        }
+        message.UpdateVertexData(TMP_VertexDataUpdateFlags.Colors32);
     }
     private void RestorePlayerAtDoor()
     {
@@ -305,6 +358,7 @@ public sealed class VehicleEscapeController : IDisposable
         if(disposed)return;disposed=true;
         if(player!=null&&!modes.HasLost)RestorePlayerAtDoor();
         if(curtain!=null)curtain.SetSiblingIndex(originalCurtainOrder);
+        if(particles!=null&&originalParticleOrder>=0)particles.transform.SetSiblingIndex(originalParticleOrder);
         if(vehicle!=null)UnityEngine.Object.Destroy(vehicle);
         if(material!=null)UnityEngine.Object.Destroy(material);
         if(detailMaterial!=null)UnityEngine.Object.Destroy(detailMaterial);

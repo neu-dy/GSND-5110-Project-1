@@ -11,6 +11,10 @@ public sealed class ObstacleMorph : MonoBehaviour
     {
         public bool enabled = true;
         [Range(0f, 1f)] public float chance = .18f;
+        [Tooltip("Maximum chance for Low/High obstacles to become wider; Choice keeps the base Chance.")]
+        [Range(0f, 1f)] public float maximumWidthChance = .5f;
+        [Tooltip("Fraction of the level finish distance at which width-changing chance reaches its maximum.")]
+        [Range(.1f, .95f)] public float widthChancePeakAtFinishFraction = .7f;
         [Min(0f)] public float delaySeconds = .05f;
         [Tooltip("The colored obstacle must reach this horizontal screen position before the black fill begins.")]
         [Range(.7f, .98f)] public float revealViewport = .86f;
@@ -24,6 +28,11 @@ public sealed class ObstacleMorph : MonoBehaviour
         public void Validate()
         {
             chance = Mathf.Clamp01(chance);
+            maximumWidthChance = Mathf.Clamp(maximumWidthChance <= 0f ? .5f : maximumWidthChance,
+                chance, 1f);
+            widthChancePeakAtFinishFraction = Mathf.Clamp(
+                widthChancePeakAtFinishFraction <= 0f ? .7f : widthChancePeakAtFinishFraction,
+                .1f, .95f);
             delaySeconds = Mathf.Max(0f, delaySeconds);
             if (revealViewport <= 0f) revealViewport = .86f;
             revealViewport = Mathf.Clamp(revealViewport, .7f, .98f);
@@ -34,6 +43,16 @@ public sealed class ObstacleMorph : MonoBehaviour
         }
 
         public Settings Copy() => (Settings)MemberwiseClone();
+
+        public float ChanceAtDistance(ObstacleMovement.CorruptionKind kind, double meters,
+            float finishMeters)
+        {
+            if (kind != ObstacleMovement.CorruptionKind.Low
+                && kind != ObstacleMovement.CorruptionKind.High) return chance;
+            return Mathf.Lerp(chance, maximumWidthChance,
+                Mathf.Clamp01((float)(Math.Max(0d, meters) /
+                    (Math.Max(1f, finishMeters) * widthChancePeakAtFinishFraction))));
+        }
     }
 
     private static Material blackMaterial;

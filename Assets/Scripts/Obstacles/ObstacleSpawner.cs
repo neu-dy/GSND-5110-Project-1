@@ -138,6 +138,8 @@ public class ObstacleSpawner : MonoBehaviour
 
     void Start()
     {
+        if (curtainMorph == null) curtainMorph = new ObstacleMorph.Settings();
+        curtainMorph.Validate();
         modes = GetComponent<GameModeController>();
         if (player == null)
             player = FindAnyObjectByType<LoseCondition>();
@@ -250,7 +252,9 @@ public class ObstacleSpawner : MonoBehaviour
         {
             movement.SetSpawner(this);
             if (curtainMorph.enabled && movement.MorphKind != ObstacleMovement.CorruptionKind.None
-                && Random.value < curtainMorph.chance)
+                && Random.value < curtainMorph.ChanceAtDistance(movement.MorphKind,
+                    modes != null ? modes.RunDistanceMeters : 0d,
+                    modes != null ? modes.LevelFinishMeters : 1000f))
             {
                 ObstacleMorph morph = currentObstacle.AddComponent<ObstacleMorph>();
                 morph.Initialize(movement, this, playerCollider, modes, curtainMorph);

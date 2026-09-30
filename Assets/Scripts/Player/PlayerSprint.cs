@@ -9,8 +9,8 @@ public class PlayerSprint : MonoBehaviour
     [SerializeField] private KeyCode sprintKey = KeyCode.LeftShift;
     [SerializeField, Min(.1f)] private float maximumRightSpeed = 2.7f;
     [SerializeField, Min(.1f)] private float acceleration = 6.5f;
-    [SerializeField, Min(.1f)] private float returnSpeed = 1.3f;
-    [SerializeField, Min(.1f)] private float returnAcceleration = 5.2f;
+    [SerializeField, Min(.1f)] private float returnSpeed = 1.5f;
+    [SerializeField, Min(.1f)] private float returnAcceleration = 6f;
     [SerializeField, Range(.35f, .65f)] private float rightmostViewport = .5f;
 
     [Header("Dash - Tap on Ground")]
@@ -59,11 +59,18 @@ public class PlayerSprint : MonoBehaviour
     [SerializeField, Min(30f)] private float menuPeakBpm = 142f;
     [SerializeField, Min(.1f)] private float menuHeartRiseSeconds = .45f;
     [SerializeField, Min(.1f)] private float menuHeartSettleSeconds = .85f;
+    [Header("Heartbeat UI - Menu Knockdown")]
+    [SerializeField, Range(0f, 30f)] private float menuKnockBpmRise = 12f;
+    [SerializeField, Min(.05f)] private float menuKnockRiseSeconds = .18f;
+    [SerializeField, Min(.1f)] private float menuKnockSettleSeconds = 1.25f;
     [SerializeField, Range(.02f, .12f)] private float overloadFlashSeconds = .04f;
     [SerializeField, Range(0f, 1f)] private float overloadGlowStrength = .75f;
     public float MenuPeakBpm => menuPeakBpm;
     public float MenuHeartRiseSeconds => menuHeartRiseSeconds;
     public float MenuHeartSettleSeconds => menuHeartSettleSeconds;
+    public float MenuKnockBpmRise => menuKnockBpmRise;
+    public float MenuKnockRiseSeconds => menuKnockRiseSeconds;
+    public float MenuKnockSettleSeconds => menuKnockSettleSeconds;
     public float OverloadFlashSeconds => overloadFlashSeconds;
     public float OverloadGlowStrength => overloadGlowStrength;
     public float BpmVariation => bpmVariation;

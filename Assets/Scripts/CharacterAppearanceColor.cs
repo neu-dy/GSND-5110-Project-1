@@ -13,10 +13,12 @@ public static class CharacterAppearanceColor
         Renderer[] renderers = character.GetComponentsInChildren<Renderer>();
         bool visibleSkin = false;
         foreach (Renderer renderer in renderers)
-            if (renderer.enabled && renderer.gameObject.activeInHierarchy
+            if (renderer.GetComponent<NearMissOutlineShell>() == null
+                && renderer.enabled && renderer.gameObject.activeInHierarchy
                 && (renderer is MeshRenderer || renderer is SkinnedMeshRenderer)) visibleSkin = true;
         foreach (Renderer renderer in renderers)
         {
+            if (renderer.GetComponent<NearMissOutlineShell>() != null) continue;
             // Boarding the vehicle temporarily hides the entire rig. In that case the active
             // skinned body still describes the current appearance; never use the hidden cube.
             if (!renderer.gameObject.activeInHierarchy

@@ -83,7 +83,8 @@ public sealed class CurtainTentacles
                     && modes.CanAffordCrouch(total,0,settings.ceilingSafetyReserve));
             canCeiling=ceilingPlan!=null;
         }
-        State.Tick(dt,meters,clear,grounded,jumpWindow,canCeiling,modes.EncounterIntervalMultiplier);
+        State.Tick(dt,meters,clear,grounded,jumpWindow,canCeiling,
+            modes.EncounterIntervalMultiplier,modes.RunElapsedSeconds);
         if(State.CompletedAttacks!=completed)
         {
             completed=State.CompletedAttacks;
@@ -138,8 +139,10 @@ public sealed class CurtainTentacles
         }
         ceilingVolley.Hide();
         float root=curtain.EdgeAt(lockedY)-.008f;
-        float preview=Mathf.Max(root,previewTip);
-        float progress=warning?Mathf.SmoothStep(0,1,State.WarningProgress):1f;
+        // A close curtain can pass the old, player-relative preview endpoint.
+        // Keep a visible harmless crest ahead of the edge throughout the cue.
+        float preview=Mathf.Min(lockedTip,Mathf.Max(root+settings.minimumVisibleWarningReachViewport,previewTip));
+        float progress=warning?Mathf.Clamp01(.35f+.65f*Mathf.SmoothStep(0,1,State.WarningProgress)):1f;
         float tip=warning?Mathf.Lerp(root,preview,progress):Mathf.Lerp(preview,lockedTip,State.Extension);
         if(State.CurrentAction==TentacleAttackState.Action.Retract)tip=Mathf.Lerp(root,lockedTip,State.Extension);
         float rootRadius=lockedRootRadius*(warning?1.6f:1f);

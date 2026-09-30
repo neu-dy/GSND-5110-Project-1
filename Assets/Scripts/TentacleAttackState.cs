@@ -30,17 +30,26 @@ public sealed class TentacleAttackState
         public float afterInjuryDelay = 1.5f;
 #if UNITY_5_3_OR_NEWER
         [UnityEngine.Header("Frequency Progression")]
-        [UnityEngine.Tooltip("Cooldown reduction after each hunt. Uses the stronger of hunt and distance progression, never multiplies them together. Warnings and injury recovery stay unchanged.")]
+        [UnityEngine.Tooltip("Cooldown reduction uses the strongest of distance, elapsed time and completed hunts; these factors do not multiply together.")]
 #endif
         public float intervalMultiplierPerHunt = .8f;
+        public float secondsPerTimeStep = 45f;
+        public float intervalMultiplierPerTimeStep = .88f;
         public float minimumNormalAttackInterval = 6f;
         public float minimumHuntAttackInterval = .35f;
 #if UNITY_5_3_OR_NEWER
         [UnityEngine.Header("Readable Warning")]
-        [UnityEngine.Tooltip("Warning duration stays the same in hunts and at higher running speed.")]
+        [UnityEngine.Tooltip("Starting warning time. Progression shortens it gradually, never below Minimum Warning Seconds.")]
 #endif
         public float warningSeconds = 1.1f;
+        public float minimumWarningSeconds = .82f;
+        public float warningFullProgressMeters = 900f;
+        public float warningFullProgressSeconds = 260f;
         public float warningReachViewport = .055f;
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.Tooltip("Minimum visible horizontal crest when the curtain has approached past the usual warning tip.")]
+#endif
+        public float minimumVisibleWarningReachViewport = .045f;
         public float flattenOtherWaves = .94f;
 #if UNITY_5_3_OR_NEWER
         [UnityEngine.Header("High Sweep (hold crouch)")]
@@ -105,12 +114,18 @@ public sealed class TentacleAttackState
             normalAttackInterval = Math.Max(3f, normalAttackInterval);
             huntAttackInterval = Math.Max(1f, huntAttackInterval);
             intervalMultiplierPerHunt = Clamp(intervalMultiplierPerHunt,.1f,1f);
+            secondsPerTimeStep = Math.Max(1f,secondsPerTimeStep <= 0f ? 45f : secondsPerTimeStep);
+            intervalMultiplierPerTimeStep = Clamp(intervalMultiplierPerTimeStep <= 0f ? .88f : intervalMultiplierPerTimeStep,.1f,1f);
             minimumNormalAttackInterval = Clamp(minimumNormalAttackInterval,3f,normalAttackInterval);
             minimumHuntAttackInterval = Clamp(minimumHuntAttackInterval,.15f,huntAttackInterval);
             arenaClearDelay = Math.Max(.15f, arenaClearDelay);
             afterInjuryDelay = Math.Max(.7f, afterInjuryDelay);
             warningSeconds = Math.Max(.7f, warningSeconds);
+            minimumWarningSeconds = Clamp(minimumWarningSeconds <= 0f ? .82f : minimumWarningSeconds,.7f,warningSeconds);
+            warningFullProgressMeters = Math.Max(1f,warningFullProgressMeters <= 0f ? 900f : warningFullProgressMeters);
+            warningFullProgressSeconds = Math.Max(1f,warningFullProgressSeconds <= 0f ? 260f : warningFullProgressSeconds);
             warningReachViewport = Clamp(warningReachViewport,.02f,.12f);
+            minimumVisibleWarningReachViewport = Clamp(minimumVisibleWarningReachViewport <= 0f ? .045f : minimumVisibleWarningReachViewport,.02f,.12f);
             flattenOtherWaves = Clamp(flattenOtherWaves,0f,1f);
             highHalfHeight = Math.Max(.1f,highHalfHeight);
             highCenterHeight = Math.Max(highHalfHeight,highCenterHeight);
@@ -152,7 +167,7 @@ public sealed class TentacleAttackState
     public bool HitThisAttack { get; private set; }
     private float ceilingWarning, ceilingTail;
     public float AttackElapsed { get; private set; }
-    public float WarningDuration => AttackKind == Kind.CeilingStab ? (ceilingWarning>0?ceilingWarning:settings.ceilingWarningSeconds) : settings.warningSeconds;
+    public float WarningDuration => AttackKind == Kind.CeilingStab ? (ceilingWarning>0?ceilingWarning:settings.ceilingWarningSeconds) : warningDuration;
     public void ConfigureCeilingVolley(float warning,float tail)
     {
         if(AttackKind!=Kind.CeilingStab||CurrentAction!=Action.Warning)return;
@@ -171,7 +186,7 @@ public sealed class TentacleAttackState
         || CurrentAction != Action.Idle || (CurrentStage == Stage.Recovery && RecoveryElapsed < settings.obstacleResumeDelay));
     private readonly Settings settings;
     private int huntAttackIndex;
-    private float distanceMultiplier = 1f;
+    private float distanceMultiplier = 1f, elapsedRunSeconds, warningDuration;
     private float cooldown, clearTime, actionTime, stageTime, injuryWait, lowScale = 1f, retractFrom = 1f;
 
     public TentacleAttackState(Settings settings)
@@ -179,15 +194,17 @@ public sealed class TentacleAttackState
         this.settings = settings ?? new Settings(); this.settings.Validate();
         NextHuntMeters = this.settings.firstHuntMeters;
         cooldown = NormalAttackInterval;
+        warningDuration = this.settings.warningSeconds;
     }
 
     public void Tick(float seconds, double meters, bool arenaClear, bool grounded, float jumpClearanceSeconds,
-        bool canCeilingAttack = false, float intervalMultiplier = 1f)
+        bool canCeilingAttack = false, float intervalMultiplier = 1f, float runElapsedSeconds = 0f)
     {
         if(!settings.enabled) { Cancel(); return; }
         if(seconds<=0)return;
         float oldInterval=CurrentStage==Stage.Hunt?HuntAttackInterval:NormalAttackInterval;
         distanceMultiplier=Clamp(intervalMultiplier,.1f,1f);
+        elapsedRunSeconds=Math.Max(0f,runElapsedSeconds);
         float nextInterval=CurrentStage==Stage.Hunt?HuntAttackInterval:NormalAttackInterval;
         if(nextInterval<oldInterval)cooldown*=nextInterval/oldInterval;
         float remaining = Math.Max(0,seconds);
@@ -247,6 +264,10 @@ public sealed class TentacleAttackState
             if(AttackKind == Kind.GroundStab && jumpWindow < .12f) AttackKind = Kind.HighSweep;
             float lowTotal = settings.lowExtendSeconds + settings.lowHoldSeconds + settings.lowRetractSeconds;
             lowScale = Math.Min(1f, Math.Max(.01f,jumpWindow*.8f) / lowTotal);
+            float warningProgress = Clamp(Math.Max((float)(meters/settings.warningFullProgressMeters),
+                elapsedRunSeconds/settings.warningFullProgressSeconds),0f,1f);
+            warningDuration = settings.warningSeconds
+                + (settings.minimumWarningSeconds-settings.warningSeconds)*warningProgress;
             AttackElapsed=0;ceilingWarning=0;ceilingTail=0;
             AttackId++; HitThisAttack = false; Extension = 0;
             CurrentAction = Action.Warning; actionTime = 0;
@@ -298,7 +319,10 @@ public sealed class TentacleAttackState
     }
     public void Cancel() { CurrentAction = Action.Idle; CurrentStage = Stage.Chase; Extension = 0; }
     private float ProgressedInterval(float initial,float minimum) =>
-        Math.Max(minimum,initial*Math.Min(distanceMultiplier,(float)Math.Pow(settings.intervalMultiplierPerHunt,CompletedHunts)));
+        Math.Max(minimum,initial*Math.Min(distanceMultiplier,Math.Min(
+            (float)Math.Pow(settings.intervalMultiplierPerTimeStep,
+                elapsedRunSeconds/settings.secondsPerTimeStep),
+            (float)Math.Pow(settings.intervalMultiplierPerHunt,CompletedHunts))));
     private static float Smooth(float t) { t=Clamp(t,0,1); return t*t*(3-2*t); }
     private static float Clamp(float v,float min,float max) => Math.Max(min,Math.Min(max,v));
 }

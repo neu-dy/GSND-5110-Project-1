@@ -14,7 +14,7 @@ public sealed class VehicleEscapeState
         [SerializeField, HideInInspector] private int timingRevision;
         [Range(.08f,.4f)] public float minimumCurtainGap = .22f;
         [Header("Lock and Ignition")]
-        public KeyCode[] lockKeys = { KeyCode.Q, KeyCode.E, KeyCode.R, KeyCode.F };
+        [HideInInspector] public KeyCode[] lockKeys = { KeyCode.Q, KeyCode.E, KeyCode.R };
         [Range(2,16)] public int lockPresses = 6;
         [Range(2,40)] public int ignitionPresses = 12;
         [Header("Cinematic (seconds)")]
@@ -39,7 +39,7 @@ public sealed class VehicleEscapeState
             bool valid=lockKeys!=null&&lockKeys.Length>=2&&lockKeys.Length<=12;
             if(valid)for(int i=0;i<lockKeys.Length;i++)
                 if(lockKeys[i]<KeyCode.A||lockKeys[i]>KeyCode.Z||Array.IndexOf(lockKeys,lockKeys[i])!=i)valid=false;
-            if(!valid)lockKeys=new[]{KeyCode.Q,KeyCode.E,KeyCode.R,KeyCode.F};
+            if(!valid)lockKeys=new[]{KeyCode.Q,KeyCode.E,KeyCode.R};
         }
         public Settings Copy()
         {

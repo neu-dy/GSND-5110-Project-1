@@ -9,10 +9,13 @@ public class HeartbeatHUD : MonoBehaviour
     private HeartGraphic heart;
     private HeartGlowGraphic glow;
     private float introStress;
+    private float menuKnockElapsed = -1f;
     private TMP_Text digits;
     private CanvasGroup opacity;
     private float phase;
     private float variationTime;
+
+    public void NotifyMenuKnockDown() => menuKnockElapsed = 0f;
 
     public void Initialize(PlayerSprint source, GameModeController controller, TMP_FontAsset font)
     {
@@ -95,6 +98,18 @@ public class HeartbeatHUD : MonoBehaviour
         // The opening performance never changes actual exertion or sprint limits.
         float introBpm = Mathf.Lerp(state.RestBpm, Mathf.Clamp(runner.MenuPeakBpm, state.RestBpm, state.LimitBpm-1f), introStress);
         displayedBpm = Mathf.Max(displayedBpm, introBpm);
+        if (menu && menuKnockElapsed >= 0f)
+        {
+            menuKnockElapsed += dt;
+            float rise = Mathf.Max(.05f, runner.MenuKnockRiseSeconds);
+            float settle = Mathf.Max(.1f, runner.MenuKnockSettleSeconds);
+            float knockPulse = menuKnockElapsed < rise
+                ? Mathf.SmoothStep(0f, 1f, menuKnockElapsed / rise)
+                : 1f - Mathf.SmoothStep(0f, 1f, (menuKnockElapsed - rise) / settle);
+            displayedBpm = Mathf.Max(displayedBpm,
+                state.RestBpm + runner.MenuKnockBpmRise * knockPulse);
+            if (menuKnockElapsed >= rise + settle) menuKnockElapsed = -1f;
+        }
         phase = Mathf.Repeat(phase + dt * displayedBpm / 60f, 1f);
         float first = Mathf.Exp(-Mathf.Pow((phase - .12f) / .065f, 2f));
         float second = .45f * Mathf.Exp(-Mathf.Pow((phase - .32f) / .08f, 2f));

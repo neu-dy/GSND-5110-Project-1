@@ -31,7 +31,7 @@ public class GameModeController : MonoBehaviour
 
     [Header("Hunt Ambush - Reaction and Escape (real seconds)")]
     [SerializeField] private HuntAmbushState.Settings huntAmbush = new HuntAmbushState.Settings();
-    [Tooltip("Three distinct letter keys, shuffled once for each ambush.")]
+    [Tooltip("Three distinct letter keys shared by tentacle ambushes and the vehicle lock.")]
     [SerializeField] private KeyCode[] ambushKeys = { KeyCode.Q, KeyCode.E, KeyCode.R };
     private HuntAmbush ambush;
     public bool AmbushOwnsPlayer => ambush != null && ambush.BlocksPlayer;
@@ -84,7 +84,13 @@ public class GameModeController : MonoBehaviour
     [SerializeField, Min(0f)] private float hitSpeedLoss = 1.8f;
     [SerializeField, Min(0f)] private float normalDodgeSpeedGain = 0.6f;
     [SerializeField, Min(0f)] private float nearMissSpeedGain = 1f;
-    [SerializeField, Min(0f)] private float nearMissClearance = 0.2f;
+    [SerializeField, Min(0f)] private float nearMissClearance = 0.24f;
+
+    [Header("Near Miss - Gold Outline")]
+    [SerializeField] private Color nearMissOutlineColor = new Color(1f, .64f, .08f, 1f);
+    [SerializeField, Range(.08f, .6f)] private float nearMissOutlineSeconds = .3f;
+    [SerializeField, Range(.005f, .12f)] private float nearMissOutlineWidth = .08f;
+    private NearMissOutline nearMissOutline;
 
     [Header("Temporary Speed - Return to Starting Speed")]
     [Tooltip("Speed lost per second above base speed. 0.6 makes a normal +0.6 boost last one second.")]
@@ -102,6 +108,8 @@ public class GameModeController : MonoBehaviour
     [SerializeField, Min(.01f)] private float metersPerUnit = 1f;
     private readonly RunDistanceState runDistance = new RunDistanceState();
     public double RunDistanceMeters => runDistance.Meters;
+    public float LevelFinishMeters => vehicleEscapeSettings != null
+        ? Mathf.Max(1f, vehicleEscapeSettings.finishMeters) : 1000f;
     public float RunElapsedSeconds { get; private set; }
     private TMP_Text runDistanceHUD;
 
@@ -158,10 +166,13 @@ public class GameModeController : MonoBehaviour
     private RectTransform startButtonRect;
     private Vector2 startButtonPosition;
     private TMP_Text[] menuControlHints;
-    private Vector2[] menuControlPositions;
     private RectTransform menuControlBackdrop;
+    private MenuControlCollapse menuControlCollapse;
     private float menuElapsed;
     private bool menuStarting;
+    private bool menuWaitingForRecovery;
+    private ClazyPlayerAnimationDriver menuAnimator;
+    private HeartbeatHUD heartbeatHUD;
     public bool IsMenuStarting => menuStarting;
     private GameObject menu;
     private RectTransform curtain;
@@ -184,18 +195,35 @@ public class GameModeController : MonoBehaviour
         if (player == null) player = FindAnyObjectByType<LoseCondition>();
         playerCollider = player.GetComponent<Collider>();
         sprint = player.GetComponent<PlayerSprint>();
+        menuAnimator = player.GetComponent<ClazyPlayerAnimationDriver>();
+        nearMissOutline = player.GetComponent<NearMissOutline>();
+        if (nearMissOutline == null) nearMissOutline = player.gameObject.AddComponent<NearMissOutline>();
+        nearMissOutline.Initialize(nearMissOutlineColor, nearMissOutlineSeconds, nearMissOutlineWidth);
         curtainReferencePosition = player.transform.position;
         BuildInterface();
     }
 
     public void StartGame()
     {
-        if (CurrentMode != Mode.Menu || menuStarting) return;
+        if (CurrentMode != Mode.Menu || menuStarting || menuWaitingForRecovery) return;
+        if (menuAnimator != null && !menuAnimator.MenuReadyToStart)
+        {
+            menuWaitingForRecovery = true;
+            startButton.interactable = false;
+            menuAnimator.FinishMenuKnockDownFast();
+            return;
+        }
+        BeginMenuEntrance();
+    }
+
+    private void BeginMenuEntrance()
+    {
         menuStarting = true;
         menuElapsed = 0f;
         startButtonPosition = startButtonRect.anchoredPosition;
         startButton.interactable = false;
         menuDevour.gameObject.SetActive(true);
+        menuControlCollapse.Begin();
         TickMenuEntrance(0f);
     }
 
@@ -213,28 +241,7 @@ public class GameModeController : MonoBehaviour
             new Vector2(offscreenX, startButtonPosition.y - parent.rect.height * .035f), eased);
         startButtonRect.localRotation = Quaternion.Euler(0, 0, -12f * Mathf.Sin(pull * Mathf.PI));
         startButtonRect.localScale = Vector3.one * Mathf.Lerp(1f, .55f, eased);
-        float backdropFall = Mathf.Clamp01(menuElapsed / .75f);
-        menuControlBackdrop.anchoredPosition = new Vector2(0f,
-            -100f - parent.rect.height * .27f * backdropFall * backdropFall);
-        menuControlBackdrop.localRotation = Quaternion.Euler(0f, 0f, -8f * backdropFall);
-        menuControlBackdrop.localScale = new Vector3(1f - .35f * backdropFall, 1f - .7f * backdropFall, 1f);
-        Color backdropColor = menuControlBackdrop.GetComponent<Image>().color;
-        backdropColor.a = .95f * (1f - backdropFall);
-        menuControlBackdrop.GetComponent<Image>().color = backdropColor;
-        for (int i = 0; i < menuControlHints.Length; i++)
-        {
-            float fall = Mathf.Clamp01((menuElapsed - i * .07f) / .72f);
-            float collapse = fall * fall;
-            RectTransform hint = menuControlHints[i].rectTransform;
-            hint.anchoredPosition = menuControlPositions[i] + new Vector2(
-                (i % 2 == 0 ? -1f : 1f) * parent.rect.width * .055f * collapse,
-                -parent.rect.height * (.25f + i * .035f) * collapse);
-            hint.localRotation = Quaternion.Euler(0, 0, (i % 2 == 0 ? -1f : 1f) * (18f + i * 5f) * fall);
-            hint.localScale = Vector3.one * Mathf.Lerp(1f, .35f, collapse);
-            Color color = menuControlHints[i].color;
-            color.a = .85f * (1f - Mathf.Clamp01((fall - .35f) / .65f));
-            menuControlHints[i].color = color;
-        }
+        menuControlCollapse.Tick(menuElapsed, dt);
         menuDevour.Show(startButtonRect, menuElapsed / reach,
             (menuElapsed - reach) / grip, pull, menuElapsed);
         if (menuElapsed < reach + grip + drag + .15f) return;
@@ -302,6 +309,7 @@ public class GameModeController : MonoBehaviour
         bool near = clearance > 0f && clearance <= nearMissClearance;
         dodges++;
         chase.Dodge(near ? nearMissSpeedGain : normalDodgeSpeedGain, maximumSpeed, near);
+        if (near) nearMissOutline?.Flash();
         SetNotice(near ? "NEAR MISS - temporary boost" : "DODGED - temporary recovery");
     }
 
@@ -337,7 +345,20 @@ public class GameModeController : MonoBehaviour
     {
         if (CurrentMode == Mode.Menu)
         {
-            if (menuStarting) TickMenuEntrance(Time.unscaledDeltaTime);
+            if (menuWaitingForRecovery)
+            {
+                if (menuAnimator == null || menuAnimator.MenuReadyToStart)
+                {
+                    menuWaitingForRecovery = false;
+                    BeginMenuEntrance();
+                }
+            }
+            else if (menuStarting) TickMenuEntrance(Time.unscaledDeltaTime);
+            else if (Input.GetMouseButtonDown(0) && PointerOverMenuCharacter(Input.mousePosition))
+            {
+                if (menuAnimator != null && menuAnimator.TryMenuKnockDown())
+                    heartbeatHUD?.NotifyMenuKnockDown();
+            }
             return;
         }
         if (Input.GetKeyDown(KeyCode.Escape)) { ReturnToMenu(); return; }
@@ -408,6 +429,34 @@ public class GameModeController : MonoBehaviour
             curtainEntering = false;
     }
 
+    private bool PointerOverMenuCharacter(Vector3 pointer)
+    {
+        Camera camera = Camera.main;
+        if (camera == null || player == null) return false;
+        float left = float.PositiveInfinity, right = float.NegativeInfinity;
+        float bottom = float.PositiveInfinity, top = float.NegativeInfinity;
+        foreach (Renderer body in player.GetComponentsInChildren<Renderer>())
+        {
+            if (!body.enabled) continue;
+            Bounds bounds = body.bounds;
+            for (int x = 0; x < 2; x++)
+                for (int y = 0; y < 2; y++)
+                    for (int z = 0; z < 2; z++)
+                    {
+                        Vector3 corner = new Vector3(x == 0 ? bounds.min.x : bounds.max.x,
+                            y == 0 ? bounds.min.y : bounds.max.y,
+                            z == 0 ? bounds.min.z : bounds.max.z);
+                        Vector3 screen = camera.WorldToScreenPoint(corner);
+                        if (screen.z <= 0f) continue;
+                        left = Mathf.Min(left, screen.x); right = Mathf.Max(right, screen.x);
+                        bottom = Mathf.Min(bottom, screen.y); top = Mathf.Max(top, screen.y);
+                    }
+        }
+        const float padding = 12f;
+        return pointer.x >= left - padding && pointer.x <= right + padding
+            && pointer.y >= bottom - padding && pointer.y <= top + padding;
+    }
+
     private void ResolveBodyContact()
     {
         // The Animator, shoe alignment and bone-driven hurtboxes have now finished.
@@ -426,10 +475,13 @@ public class GameModeController : MonoBehaviour
         if(VehicleEscapeActive)return true;
         if(!vehicleEscapeSettings.enabled||RunDistanceMeters<vehicleEscapeSettings.finishMeters||!IsPlaying||Camera.main==null)return false;
         // Finish owns all controls and timing; no announced hazard can leak into it.
+        nearMissOutline?.Stop();
         ambush?.Cancel(false);tentacles?.Cancel();spawner?.StopForVehicleEscape();
         runDistance.LimitTo(vehicleEscapeSettings.finishMeters);RefreshRunDistance();
         chaseHUD.gameObject.SetActive(false);
-        vehicleEscape=new VehicleEscapeController(this,vehicleEscapeSettings,playerCollider,curtain,particles,
+        VehicleEscapeState.Settings escapeConfig = vehicleEscapeSettings.Copy();
+        escapeConfig.lockKeys = (KeyCode[])ambushKeys.Clone();
+        vehicleEscape=new VehicleEscapeController(this,escapeConfig,playerCollider,curtain,particles,
             textTemplate!=null?textTemplate.font:null,huntAmbush);
         return true;
     }
@@ -449,6 +501,7 @@ public class GameModeController : MonoBehaviour
     {
         if (CurrentMode != Mode.Running) return false;
         swallowing = true;
+        nearMissOutline?.Stop();
         ambush?.Cancel(false);
         tentacles?.Cancel();
         deathElapsed = 0f;
@@ -664,7 +717,8 @@ public class GameModeController : MonoBehaviour
         {
             var heartObject = new GameObject("Heartbeat HUD", typeof(RectTransform), typeof(HeartbeatHUD));
             heartObject.transform.SetParent(root.transform, false);
-            heartObject.GetComponent<HeartbeatHUD>().Initialize(sprint, this, textTemplate != null ? textTemplate.font : null);
+            heartbeatHUD = heartObject.GetComponent<HeartbeatHUD>();
+            heartbeatHUD.Initialize(sprint, this, textTemplate != null ? textTemplate.font : null);
         }
 
         menu = Panel("Main Menu", root.transform, Color.clear).gameObject;
@@ -678,12 +732,10 @@ public class GameModeController : MonoBehaviour
         menuControlBackdrop.anchoredPosition = new Vector2(0f, -100f);
         string[] controls = { "SPACE  JUMP", "HOLD S  SLIDE", "HOLD SHIFT  SPRINT", "CTRL  DASH", "QTE  FOLLOW PROMPTS" };
         menuControlHints = new TMP_Text[controls.Length];
-        menuControlPositions = new Vector2[controls.Length];
         for (int i = 0; i < controls.Length; i++)
         {
             Vector2 position = i == 4 ? new Vector2(0, -128f)
                 : new Vector2(i % 2 == 0 ? -100f : 100f, -69f - (i / 2) * 31f);
-            menuControlPositions[i] = position;
             TMP_Text hint = Text("Control Hint " + i, menu.transform, controls[i], position,
                 new Vector2(i == 4 ? 390f : 195f, 28f), i == 4 ? 16 : 18);
             hint.rectTransform.anchorMin = hint.rectTransform.anchorMax = startButtonRect.anchorMin;
@@ -691,6 +743,8 @@ public class GameModeController : MonoBehaviour
             hint.color = new Color(1f, 1f, 1f, .85f);
             menuControlHints[i] = hint;
         }
+        menuControlCollapse = new MenuControlCollapse((RectTransform)menu.transform,
+            menuControlBackdrop, menuControlHints);
         var devour = new GameObject("Menu Devouring Tentacles", typeof(RectTransform), typeof(CanvasRenderer), typeof(MenuDevourGraphic));
         devour.transform.SetParent(menu.transform, false);
         var devourRect = devour.GetComponent<RectTransform>();
